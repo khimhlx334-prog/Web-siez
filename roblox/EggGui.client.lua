@@ -182,32 +182,122 @@ evHatch.OnClientEvent:Connect(function(res)
 	task.delay(2.2, function() pop.Visible = false end)
 end)
 
--- ---------- 🐾 สัตว์เลี้ยงลอยตามตัว (top-3 พาวเวอร์ · ขนาดตามพลัง) ----------
+-- ---------- 🐾 สัตว์เลี้ยงบล็อกกี้ 3D ลอยตามตัว (top-3 · ขนาดตามแรร์) ----------
+local SCALE_OF = { ["ธรรมดา"] = 1, ["ไม่ธรรมดา"] = 1.15, ["หายาก"] = 1.35, ["มหากาพย์"] = 1.6, ["ตำนาน"] = 1.9 }
+local function buildPet(id, scale)
+	local folder = Instance.new("Folder"); folder.Parent = workspace
+	local core = Instance.new("Part"); core.Size = Vector3.new(0.2, 0.2, 0.2); core.Transparency = 1
+	core.Anchored = true; core.CanCollide = false; core.CanQuery = false; core.CanTouch = false; core.Parent = folder
+	local function add(shape, size, off, c, rot, mat)
+		local p = Instance.new("Part"); p.Shape = shape
+		p.Size = Vector3.new(size[1] * scale, size[2] * scale, size[3] * scale)
+		p.Color = c; p.Material = mat or Enum.Material.SmoothPlastic
+		p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+		p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
+		local w = Instance.new("Weld"); w.Part0 = core; w.Part1 = p
+		local r = rot and CFrame.Angles(math.rad(rot[1]), math.rad(rot[2]), math.rad(rot[3])) or CFrame.new()
+		w.C0 = CFrame.new(off[1] * scale, off[2] * scale, off[3] * scale) * r
+		p.Parent = folder
+	end
+	local BK, BL = Enum.PartType.Block, Enum.PartType.Ball
+	local function legs(c, w_, h, x, z)
+		for _, px in ipairs({ -x, x }) do for _, pz in ipairs({ -z, z }) do
+			add(BK, { w_, h, w_ }, { px, h / 2, pz }, c)
+		end end
+	end
+	local function head(c, hy, hz, s)
+		add(BK, { s, s * 0.9, s }, { 0, hy, hz }, c)
+	end
+	local WH = Color3.fromRGB(250, 250, 250)
+	if id == "cat" then
+		local OR = Color3.fromRGB(240, 140, 60)
+		add(BK, { 1.5, 1, 2.1 }, { 0, 1, 0 }, OR); add(BK, { 1.2, 0.5, 1.4 }, { 0, 0.72, 0.2 }, WH)
+		head(OR, 1.75, 1.35, 1.05); add(BK, { 0.5, 0.3, 0.3 }, { 0, 1.55, 1.95 }, WH)
+		add(BK, { 0.3, 0.45, 0.12 }, { -0.35, 2.4, 1.3 }, OR, { 0, 0, 20 }); add(BK, { 0.3, 0.45, 0.12 }, { 0.35, 2.4, 1.3 }, OR, { 0, 0, -20 })
+		add(BK, { 0.2, 0.2, 0.9 }, { 0, 1.3, -1.25 }, OR, { 45, 0, 0 }); legs(OR, 0.32, 0.75, 0.5, 0.75)
+	elseif id == "dog" then
+		local CR, BR = Color3.fromRGB(230, 190, 140), Color3.fromRGB(170, 110, 60)
+		add(BK, { 1.5, 1, 2.1 }, { 0, 1, 0 }, CR); add(BK, { 1.2, 0.5, 1.4 }, { 0, 0.72, 0.2 }, WH)
+		head(CR, 1.75, 1.35, 1.05); add(BK, { 0.5, 0.3, 0.3 }, { 0, 1.55, 1.95 }, WH)
+		add(BK, { 0.35, 0.6, 0.15 }, { -0.38, 2.45, 1.3 }, BR, { 0, 0, 15 }); add(BK, { 0.35, 0.6, 0.15 }, { 0.38, 2.45, 1.3 }, BR, { 0, 0, -15 })
+		add(BK, { 0.18, 0.3, 0.3 }, { 0, 1.2, -1.2 }, WH); legs(BR, 0.3, 0.6, 0.5, 0.75)
+	elseif id == "rab" then
+		add(BK, { 1.4, 1, 1.9 }, { 0, 1, 0 }, WH); head(WH, 1.7, 1.25, 1)
+		add(BK, { 0.22, 1.1, 0.18 }, { -0.25, 2.7, 1.15 }, WH, { 10, 0, 8 }); add(BK, { 0.22, 1.1, 0.18 }, { 0.25, 2.7, 1.15 }, WH, { 10, 0, -8 })
+		add(BL, { 0.4, 0.4, 0.4 }, { 0, 1, -1.1 }, WH); legs(WH, 0.3, 0.7, 0.45, 0.7)
+	elseif id == "pan" then
+		local BKc = Color3.fromRGB(35, 35, 40)
+		add(BK, { 1.6, 1.1, 2.1 }, { 0, 1, 0 }, WH); head(WH, 1.8, 1.35, 1.1)
+		add(BK, { 0.3, 0.3, 0.15 }, { -0.4, 2.45, 1.3 }, BKc); add(BK, { 0.3, 0.3, 0.15 }, { 0.4, 2.45, 1.3 }, BKc)
+		add(BK, { 0.24, 0.3, 0.1 }, { -0.26, 1.9, 1.9 }, BKc); add(BK, { 0.24, 0.3, 0.1 }, { 0.26, 1.9, 1.9 }, BKc)
+		legs(BKc, 0.34, 0.75, 0.55, 0.75)
+	elseif id == "cap" then
+		local CB = Color3.fromRGB(150, 100, 60)
+		add(BK, { 1.7, 1.2, 2.3 }, { 0, 1, 0 }, CB); add(BK, { 1, 0.9, 1.1 }, { 0, 1.5, 1.55 }, CB)
+		add(BK, { 0.5, 0.35, 0.4 }, { 0, 1.25, 2.1 }, Color3.fromRGB(120, 80, 50))
+		add(BK, { 0.18, 0.2, 0.1 }, { -0.32, 2.05, 1.5 }, CB); add(BK, { 0.18, 0.2, 0.1 }, { 0.32, 2.05, 1.5 }, CB)
+		legs(CB, 0.36, 0.7, 0.55, 0.8)
+	elseif id == "ele" then
+		local PK = Color3.fromRGB(250, 170, 190)
+		add(BK, { 2, 1.5, 2.6 }, { 0, 1.3, 0 }, PK); add(BL, { 1.3, 1.3, 1.3 }, { 0, 2, 1.6 }, PK)
+		add(BK, { 0.4, 1.3, 0.4 }, { 0, 1.5, 2.5 }, PK, { 50, 0, 0 })
+		add(BK, { 0.15, 0.9, 0.7 }, { -0.8, 2, 1.5 }, PK); add(BK, { 0.15, 0.9, 0.7 }, { 0.8, 2, 1.5 }, PK)
+		legs(PK, 0.5, 0.9, 0.7, 0.95)
+	elseif id == "lio" then
+		local GD, MN = Color3.fromRGB(230, 180, 60), Color3.fromRGB(170, 110, 40)
+		add(BK, { 1.6, 1.1, 2.2 }, { 0, 1, 0 }, GD)
+		add(BL, { 1.7, 1.7, 1.2 }, { 0, 1.8, 1.2 }, MN); add(BK, { 0.9, 0.8, 0.9 }, { 0, 1.8, 1.75 }, GD)
+		add(BK, { 0.2, 0.2, 0.8 }, { 0, 1.2, -1.3 }, GD, { 30, 0, 0 }); add(BL, { 0.35, 0.35, 0.35 }, { 0, 0.9, -1.75 }, MN)
+		legs(GD, 0.34, 0.75, 0.55, 0.8)
+	elseif id == "dra" then
+		local IB, IC = Color3.fromRGB(140, 200, 255), Color3.fromRGB(225, 245, 255)
+		add(BK, { 1.6, 1.1, 2.4 }, { 0, 1, 0 }, IB); add(BK, { 0.9, 0.7, 1.1 }, { 0, 1.8, 1.5 }, IB)
+		add(BK, { 0.25, 0.5, 0.2 }, { -0.25, 2.35, 1.4 }, IC, { 0, 0, 10 }); add(BK, { 0.25, 0.5, 0.2 }, { 0.25, 2.35, 1.4 }, IC, { 0, 0, -10 })
+		add(BK, { 0.2, 0.5, 0.2 }, { 0, 1.75, 0.2 }, IC); add(BK, { 0.2, 0.5, 0.2 }, { 0, 1.75, -0.6 }, IC)
+		add(BK, { 1.6, 0.12, 1 }, { -1.1, 1.9, 0 }, IC, { 0, 0, 30 }, Enum.Material.Neon); add(BK, { 1.6, 0.12, 1 }, { 1.1, 1.9, 0 }, IC, { 0, 0, -30 }, Enum.Material.Neon)
+		legs(IB, 0.36, 0.75, 0.55, 0.85)
+	elseif id == "uni" then
+		add(BK, { 1.5, 1.1, 2.2 }, { 0, 1.05, 0 }, WH); head(WH, 1.85, 1.4, 1)
+		add(BK, { 0.15, 0.9, 0.15 }, { 0, 2.6, 1.6 }, Color3.fromRGB(255, 220, 120), { 20, 0, 0 })
+		add(BK, { 0.3, 0.35, 0.5 }, { 0, 2.05, 1 }, Color3.fromRGB(255, 90, 120)); add(BK, { 0.3, 0.35, 0.5 }, { 0, 1.85, 0.6 }, Color3.fromRGB(255, 220, 80)); add(BK, { 0.3, 0.35, 0.5 }, { 0, 1.65, 0.2 }, Color3.fromRGB(90, 160, 255))
+		legs(WH, 0.3, 0.85, 0.5, 0.8)
+	elseif id == "gld" then
+		local GG = Color3.fromRGB(255, 200, 60)
+		add(BK, { 1.7, 1.2, 2.5 }, { 0, 1.05, 0 }, GG); add(BK, { 0.9, 0.7, 1.1 }, { 0, 1.9, 1.55 }, GG)
+		add(BK, { 0.15, 0.5, 0.15 }, { -0.3, 2.5, 1.35 }, Color3.fromRGB(255, 245, 210), { 0, 0, 15 }); add(BK, { 0.15, 0.5, 0.15 }, { 0.3, 2.5, 1.35 }, Color3.fromRGB(255, 245, 210), { 0, 0, -15 })
+		add(BK, { 1.8, 0.12, 1.2 }, { -1.2, 2, 0 }, Color3.fromRGB(255, 240, 180), { 0, 0, 35 }, Enum.Material.Neon); add(BK, { 1.8, 0.12, 1.2 }, { 1.2, 2, 0 }, Color3.fromRGB(255, 240, 180), { 0, 0, -35 }, Enum.Material.Neon)
+		add(BK, { 0.25, 0.25, 1.1 }, { 0, 1.4, -1.4 }, GG, { 35, 0, 0 })
+		legs(GG, 0.38, 0.8, 0.6, 0.9)
+	else -- phx
+		local PU, ON = Color3.fromRGB(150, 80, 220), Color3.fromRGB(255, 150, 60)
+		add(BL, { 1.4, 1.3, 1.8 }, { 0, 1.2, 0 }, PU); add(BL, { 0.9, 0.9, 0.9 }, { 0, 2, 1 }, PU)
+		add(BK, { 0.3, 0.2, 0.45 }, { 0, 1.9, 1.5 }, ON)
+		add(BK, { 1.7, 0.12, 1.1 }, { -1.1, 1.7, 0 }, ON, { 0, 0, 35 }, Enum.Material.Neon); add(BK, { 1.7, 0.12, 1.1 }, { 1.1, 1.7, 0 }, ON, { 0, 0, -35 }, Enum.Material.Neon)
+		add(BK, { 0.2, 0.8, 0.5 }, { -0.3, 1.1, -1.2 }, PU, { -30, 0, 0 }, Enum.Material.Neon); add(BK, { 0.2, 0.8, 0.5 }, { 0.3, 1.1, -1.2 }, PU, { -30, 0, 0 }, Enum.Material.Neon)
+	end
+	return core
+end
+
 local followers = {}
+local lastPetsJSON = nil
 local function buildFollowers()
-	for _, f in ipairs(followers) do f.part:Destroy() end
+	local json = plr:GetAttribute("PetsJSON") or "{}"
+	if json == lastPetsJSON then return end
+	lastPetsJSON = json
+	for _, f in ipairs(followers) do f.core.Parent:Destroy() end
 	followers = {}
-	local ok, counts = pcall(function() return Http:JSONDecode(plr:GetAttribute("PetsJSON") or "{}") end)
+	local ok, counts = pcall(function() return Http:JSONDecode(json) end)
 	if not ok or type(counts) ~= "table" then return end
 	local owned = {}
 	for id, count in pairs(counts) do
 		for _, p in ipairs(PETS) do
-			if p.id == id then
-				for _ = 1, math.min(count, 3) do table.insert(owned, p) end
-			end
+			if p.id == id and count > 0 then table.insert(owned, p) end
 		end
 	end
 	table.sort(owned, function(a, b) return a.power > b.power end)
 	for i = 1, math.min(3, #owned) do
-		local part = Instance.new("Part"); part.Size = Vector3.new(0.5, 0.5, 0.5)
-		part.Anchored = true; part.CanCollide = false; part.CanQuery = false; part.CanTouch = false
-		part.Transparency = 1; part.Parent = workspace
-		local bb = Instance.new("BillboardGui"); bb.AlwaysOnTop = true
-		local sz = 60 + math.min(90, owned[i].power)
-		bb.Size = UDim2.fromOffset(sz, sz); bb.Parent = part
-		local t = Instance.new("TextLabel"); t.Size = UDim2.new(1, 0, 1, 0); t.BackgroundTransparency = 1
-		t.Font = Enum.Font.GothamBlack; t.TextScaled = true; t.Text = owned[i].emoji; t.Parent = bb
-		table.insert(followers, { part = part, angle = (i - 1) * (math.pi * 2 / 3), dist = 3 + i * 0.8 })
+		local core = buildPet(owned[i].id, SCALE_OF[owned[i].rarity] or 1)
+		table.insert(followers, { core = core, angle = (i - 1) * (math.pi * 2 / 3), dist = 3.5 + i * 0.9 })
 	end
 end
 task.spawn(function()
@@ -223,11 +313,11 @@ task.spawn(function()
 		t += 0.03
 		local char = plr.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart")
-		for i, f in ipairs(followers) do
-			if root then
-				local a = f.angle + t * 1.2
-				local pos = root.Position + Vector3.new(math.cos(a) * f.dist, 2.2 + math.sin(t * 2 + i) * 0.4, math.sin(a) * f.dist)
-				f.part.Position = pos
+		if root then
+			for i, f in ipairs(followers) do
+				local a = f.angle + t * 0.9
+				local pos = root.Position + Vector3.new(math.cos(a) * f.dist, 2.4 + math.sin(t * 2 + i) * 0.35, math.sin(a) * f.dist)
+				f.core.CFrame = CFrame.new(pos, Vector3.new(root.Position.X, pos.Y, root.Position.Z))
 			end
 		end
 	end
@@ -237,7 +327,7 @@ end)
 local function refresh()
 	local ls = plr:FindFirstChild("leaderstats")
 	if ls then
-		coinTxt.Text = "🪙 " .. fmt(ls.Coins.Value)
+		coinTxt.Text = "💰 " .. fmt(ls.Coins.Value)
 		powTxt.Text = "⚡ " .. fmt(plr:GetAttribute("Power") or 0)
 	end
 	-- ดัชนี
