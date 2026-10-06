@@ -1,9 +1,10 @@
--- EGG ISLE v5 LOADER (plugin) — กดปุ่ม Load EggIsle ในแถบเครื่องมือ
+-- EGG ISLE v6 LOADER (plugin) — กดปุ่ม Load EggIsle ในแถบเครื่องมือ
 local CORE = [=[
 -- ============================================================
--- EGG ISLE v5 · GameCore5 (Script → ServerScriptService)
+-- EGG ISLE v6 · GameCore6 (Script → ServerScriptService)
 -- Money $ · weight eggs + hold-3s pickup · fuse/trail/chest/sell
 -- 8 garden slots + bag · 3 leaderboards · Robux tracking · i18n keys
+-- v6: guardians (rarest pet per island) · weight x income · spawn odds · tutorial
 -- ============================================================
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
@@ -14,7 +15,7 @@ local Http = game:GetService("HttpService")
 local MPS = game:GetService("MarketplaceService")
 local WS = game:GetService("Workspace")
 
-local store = DataStoreService:GetDataStore("EggIsleV5")
+local store = DataStoreService:GetDataStore("EggIsleV6")
 
 local function killOld(name) local o = script.Parent:FindFirstChild(name) if o then o:Destroy() end end
 killOld("MapBuilder")
@@ -40,17 +41,56 @@ local TRAILS = {
 	{ mult = 2, cost = 10000, color = Color3.fromRGB(120, 200, 255) },
 	{ mult = 2.5, cost = 40000, color = Color3.fromRGB(255, 120, 50) },
 }
+-- ---------- สมดุล: โอกาสเกิดไข่ต่อระดับ (ปรับได้ที่นี่) ----------
+local SPAWN_W = { common = 60, uncommon = 30, rare = 16, epic = 7, legendary = 3 }
+-- สัตว์หายากกว่า = เงินเยอะกว่า (power) · น้ำหนักไข่คูณเงินอีก 0.8x-1.6x · ยักษ์ x2
+local PET_COLOR = {
+	cat = Color3.fromRGB(255, 150, 60), dog = Color3.fromRGB(220, 180, 120), rab = Color3.fromRGB(250, 250, 250),
+	pan = Color3.fromRGB(60, 60, 65), cap = Color3.fromRGB(150, 105, 70), ele = Color3.fromRGB(255, 150, 190),
+	lio = Color3.fromRGB(255, 200, 80), dra = Color3.fromRGB(140, 220, 255), uni = Color3.fromRGB(255, 255, 255),
+	gld = Color3.fromRGB(255, 200, 60), phx = Color3.fromRGB(255, 110, 40),
+}
 local function petById(id) for _, p in ipairs(PETS) do if p.id == id then return p end end end
 local function poolOf(isl)
 	local t = {}
 	for _, p in ipairs(PETS) do if p.isl == isl then table.insert(t, p) end end
 	return t
 end
-local function entryPower(en)
+local function pickWeighted(pool)
+	local total = 0
+	for _, p in ipairs(pool) do total = total + (SPAWN_W[p.rarity] or 1) end
+	local r = math.random() * total
+	for _, p in ipairs(pool) do
+		r = r - (SPAWN_W[p.rarity] or 1)
+		if r <= 0 then return p end
+	end
+	return pool[#pool]
+end
+-- entry = "id@น้ำหนัก" หรือ "BIGid@น้ำหนัก"
+local function parseEntry(en)
 	local base, big = en, false
 	if base:sub(1, 3) == "BIG" then big = true; base = base:sub(4) end
+	local i = base:find("@")
+	local w = nil
+	if i then w = tonumber(base:sub(i + 1)); base = base:sub(1, i - 1) end
+	return base, big, w
+end
+local function wMult(base, w)
 	local p = petById(base)
-	return p and p.power * (big and 2 or 1) or 0
+	if not p or not w then return 1 end
+	return math.clamp(w / WEIGHT[p.rarity], 0.5, 2)
+end
+local function entryPower(en)
+	local base, big, w = parseEntry(en)
+	local p = petById(base)
+	if not p then return 0 end
+	return p.power * wMult(base, w) * (big and 2 or 1)
+end
+local function sellValue(en)
+	local base, big, w = parseEntry(en)
+	local p = petById(base)
+	if not p then return 0 end
+	return math.floor(SELL_VALUE[p.rarity] * wMult(base, w) * (big and 3 or 1))
 end
 
 -- ---------- islands ----------
@@ -123,7 +163,7 @@ Players.PlayerAdded:Connect(function(plr)
 	local ls = Instance.new("Folder"); ls.Name = "leaderstats"; ls.Parent = plr
 	local cash = Instance.new("IntValue"); cash.Name = "Money"; cash.Value = 0; cash.Parent = ls
 
-	local d = { money = 150, pets = {}, boatLvl = 1, gardenLvl = 1, index = {}, intro = false, trail = 0, trailsOwned = {}, lastGift = 0, playSec = 0, robuxSpent = 0 }
+	local d = { money = 150, pets = {}, boatLvl = 1, gardenLvl = 1, index = {}, intro = false, trail = 0, trailsOwned = {}, lastGift = 0, playSec = 0, robuxSpent = 0, tut = false }
 	local ok, got = pcall(function() return store:GetAsync("u_" .. plr.UserId) end)
 	if ok and type(got) == "table" then for k, v in pairs(got) do d[k] = v end end
 	d.money = d.money or 150
@@ -138,6 +178,7 @@ Players.PlayerAdded:Connect(function(plr)
 	d.slot = slot
 	plr:SetAttribute("Slot", slot)
 	plr:SetAttribute("NeedIntro", not d.intro)
+	plr:SetAttribute("Tut", d.tut and 0 or 1)
 	syncAttrs(plr)
 	task.spawn(function()
 		while DATA[plr.UserId] do
@@ -341,6 +382,118 @@ evBoatIn.OnServerEvent:Connect(function(plr, th, tu)
 end)
 
 -- ============================================================
+-- ผู้พิทักษ์: สัตว์หายากสุดของแต่ละเกาะ ไล่จับคนถือไข่แล้วเอาไข่คืน
+-- ============================================================
+local RANK = { common = 1, uncommon = 2, rare = 3, epic = 4, legendary = 5 }
+local GUARD_PET = {}
+for isl = 2, 5 do
+	local best = nil
+	for _, p in ipairs(PETS) do
+		if p.isl == isl and (not best or RANK[p.rarity] > RANK[best.rarity]) then best = p end
+	end
+	GUARD_PET[isl] = best.id
+end
+local guardians = {}
+local function weldTo(a, b, c0)
+	local w = Instance.new("Weld"); w.Part0 = a; w.Part1 = b; w.C0 = c0; w.Parent = a
+end
+local function buildGuardian(isl)
+	local id = GUARD_PET[isl]
+	local col = PET_COLOR[id] or Color3.fromRGB(120, 120, 130)
+	local islD = ISLANDS[isl]
+	local top = 8
+	local g0 = Instance.new("Folder"); g0.Name = "Guardian" .. isl; g0.Parent = root
+	local body = part(Vector3.new(7, 4, 10), islD.pos + Vector3.new(0, top + 4, 0), col, Enum.Material.SmoothPlastic, false)
+	body.Name = "GBody"
+	local head = part(Vector3.new(4.5, 4.5, 4.5), islD.pos + Vector3.new(0, top + 6, 6.5), col, Enum.Material.SmoothPlastic, false)
+	head.Name = "GHead"
+	head:SetAttribute("Pet", id)
+	head:SetAttribute("Isle", isl)
+	weldTo(body, head, CFrame.new(0, 2, 6.5))
+	for _, lp in ipairs({ Vector3.new(-2.5, -2.5, 3.5), Vector3.new(2.5, -2.5, 3.5), Vector3.new(-2.5, -2.5, -3.5), Vector3.new(2.5, -2.5, -3.5) }) do
+		local leg = part(Vector3.new(1.6, 3, 1.6), islD.pos + lp + Vector3.new(0, top + 2, 0), col, Enum.Material.SmoothPlastic, false)
+		weldTo(body, leg, CFrame.new(lp.X, lp.Y, lp.Z))
+	end
+	local earL = part(Vector3.new(1, 2, 0.6), islD.pos + Vector3.new(-1.5, top + 8.5, 6.5), col, Enum.Material.SmoothPlastic, false)
+	weldTo(body, earL, CFrame.new(-1.5, 4.5, 6.5))
+	local earR = part(Vector3.new(1, 2, 0.6), islD.pos + Vector3.new(1.5, top + 8.5, 6.5), col, Enum.Material.SmoothPlastic, false)
+	weldTo(body, earR, CFrame.new(1.5, 4.5, 6.5))
+	local li = Instance.new("PointLight"); li.Color = col; li.Range = 28; li.Brightness = 2; li.Parent = body
+	guardians[isl] = { body = body, pos = Vector3.new(0, 0, 0), heading = 0, patrol = nil, cool = 0 }
+end
+for isl = 2, 5 do buildGuardian(isl) end
+
+task.spawn(function()
+	local dt = 1 / 20
+	while true do
+		task.wait(dt)
+		for isl, g in pairs(guardians) do
+			local islD = ISLANDS[isl]
+			local top = 8
+			g.cool = math.max(0, g.cool - dt)
+			-- หาเหยื่อ: คนที่ถือไข่ของเกาะนี้ อยู่ในเกาะ และผู้พิทักษ์มองเห็น
+			local victimUid, victimHrp, victimW = nil, nil, 0
+			if g.cool <= 0 then
+				for uid, c in pairs(carrying) do
+					if c.isl == isl then
+						local plr = Players:GetPlayerFromUserId(uid)
+						local hrp = plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+						if hrp then
+							local d2 = hrp.Position - islD.pos
+							local inIsle = Vector3.new(d2.X, 0, d2.Z).Magnitude < islD.r + 25
+							local near = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(islD.pos.X + g.pos.X, 0, islD.pos.Z + g.pos.Z)).Magnitude < 60
+							if inIsle and near then
+								victimUid, victimHrp, victimW = uid, hrp, c.weight
+								break
+							end
+						end
+					end
+				end
+			end
+			local speed, dest = 9, nil
+			if victimHrp then
+				dest = victimHrp.Position - islD.pos
+				speed = math.min(22, carrySpeed(victimW) + 6) -- ถือไข่หนักยิ่งหนีช้า ผู้พิทักษ์ก็ไล่ทันง่ายขึ้น
+			else
+				if not g.patrol or (Vector3.new(g.pos.X, 0, g.pos.Z) - g.patrol).Magnitude < 5 then
+					local a = math.random() * math.pi * 2
+					local rr = math.random() * math.max(10, islD.r - 30)
+					g.patrol = Vector3.new(math.cos(a) * rr, 0, math.sin(a) * rr)
+				end
+				dest = g.patrol
+			end
+			local dir = dest - g.pos
+			dir = Vector3.new(dir.X, 0, dir.Z)
+			local L = dir.Magnitude
+			if L > 0.5 then
+				dir = dir.Unit
+				g.pos = g.pos + dir * math.min(speed * dt, L)
+				g.heading = math.atan2(dir.X, dir.Z)
+			end
+			g.body.CFrame = CFrame.new(islD.pos + g.pos + Vector3.new(0, top + 4, 0)) * CFrame.Angles(0, g.heading, 0)
+			-- จับได้: แย่งไข่คืนรัง
+			if victimUid and (victimHrp.Position - (islD.pos + g.pos + Vector3.new(0, top, 0))).Magnitude < 6 then
+				local c = carrying[victimUid]
+				if c then
+					c.model:Destroy()
+					carrying[victimUid] = nil
+					local plr = Players:GetPlayerFromUserId(victimUid)
+					if plr then
+						plr:SetAttribute("Carrying", 0); plr:SetAttribute("CarryWeight", 0)
+						applyWalk(plr)
+						evNote:FireClient(plr, "pop", "guard_hit")
+					end
+					local ss = spots[isl]
+					makeEgg(isl, ss[math.random(1, #ss)], c.pet, c.weight) -- ไข่คืนรัง
+					g.cool = 6
+					g.patrol = nil
+				end
+			end
+		end
+	end
+end)
+
+-- ============================================================
 -- day/night + eggs
 -- ============================================================
 local DAY_LEN, NIGHT_LEN, DAWN_WARN = 180, 240, 20
@@ -372,9 +525,11 @@ local function spawnNightEggs()
 			if not picked[s] then
 				picked[s] = true
 				local pool = poolOf(isl)
-				local pet = pool[math.random(1, #pool)]
-				makeEgg(isl, s, pet.id, WEIGHT[pet.rarity])
-				if isl == 5 then evNote:FireAllClients("ban", "legend") end
+				local pet = pickWeighted(pool) -- ถ่วงน้ำหนักตาม SPAWN_W
+				local bw = WEIGHT[pet.rarity]
+				local w = math.floor(bw * (0.8 + math.random() * 0.8) * 10) / 10 -- 0.8x-1.6x
+				makeEgg(isl, s, pet.id, w)
+				if pet.rarity == "legendary" then evNote:FireAllClients("ban", "legend") end
 			end
 		end
 	end
@@ -442,7 +597,7 @@ local function hatchAt(plr)
 	c.model:Destroy(); carrying[uid] = nil
 	plr:SetAttribute("Carrying", 0); plr:SetAttribute("CarryWeight", 0)
 	applyWalk(plr)
-	table.insert(d.pets, c.pet)
+	table.insert(d.pets, c.pet .. "@" .. c.weight)
 	local p = petById(c.pet)
 	d.index[p.isl] = d.index[p.isl] or {}
 	local seen = false
@@ -513,14 +668,24 @@ evAct.OnServerEvent:Connect(function(plr, action, arg)
 	elseif action == "fuse" then
 		local id = tostring(arg or "")
 		local cnt = 0
-		for _, en in ipairs(d.pets) do if en == id then cnt = cnt + 1 end end
+		for _, en in ipairs(d.pets) do
+			local b, bg = parseEntry(en)
+			if b == id and not bg then cnt = cnt + 1 end
+		end
 		if cnt >= 3 and petById(id) then
-			local removed = 0; local np = {}
+			local removed = 0; local np = {}; local sumW = 0
 			for _, en in ipairs(d.pets) do
-				if en == id and removed < 3 then removed = removed + 1 else table.insert(np, en) end
+				local b, bg, w = parseEntry(en)
+				if b == id and not bg and removed < 3 then
+					removed = removed + 1
+					sumW = sumW + (w or WEIGHT[petById(id).rarity])
+				else
+					table.insert(np, en)
+				end
 			end
 			d.pets = np
-			table.insert(d.pets, "BIG" .. id)
+			sumW = math.floor(sumW * 10) / 10
+			table.insert(d.pets, "BIG" .. id .. "@" .. sumW)
 			syncAttrs(plr)
 			evNote:FireClient(plr, "pop", "fuse_ok", id)
 		end
@@ -529,10 +694,8 @@ evAct.OnServerEvent:Connect(function(plr, action, arg)
 		for i, x in ipairs(d.pets) do
 			if x == en then
 				table.remove(d.pets, i)
-				local base, big = en, false
-				if base:sub(1, 3) == "BIG" then big = true; base = base:sub(4) end
-				local p = petById(base)
-				local val = SELL_VALUE[p.rarity] * (big and 3 or 1)
+				local base, big = parseEntry(en)
+				local val = sellValue(en)
 				if c then c.Value = c.Value + val end
 				syncAttrs(plr)
 				evNote:FireClient(plr, "pop", "sold", base, big and 1 or 0, val)
@@ -558,6 +721,9 @@ evAct.OnServerEvent:Connect(function(plr, action, arg)
 		plr:SetAttribute("TrailLvl", i)
 		applyWalk(plr)
 		evNote:FireClient(plr, "pop", "trail_on", i, t.mult)
+	elseif action == "tutdone" then
+		d.tut = true
+		plr:SetAttribute("Tut", 0)
 	elseif action == "gift" then
 		local now = os.time()
 		if now - (d.lastGift or 0) >= 72000 then
@@ -648,6 +814,7 @@ local LS = game:GetService("LocalizationService")
 local M = {}
 
 M.PET_R = { cat = "common", dog = "common", rab = "common", pan = "uncommon", cap = "uncommon", ele = "rare", lio = "rare", dra = "epic", uni = "epic", gld = "legendary", phx = "legendary" }
+M.WEIGHT = { common = 10, uncommon = 20, rare = 40, epic = 80, legendary = 150 }
 M.PWR = { cat = 1, dog = 1, rab = 1, pan = 3, cap = 3, ele = 10, lio = 10, dra = 40, uni = 40, gld = 200, phx = 200 }
 M.PET_N = {
 	en = { cat = "Orange Cat", dog = "Corgi", rab = "White Bunny", pan = "Panda", cap = "Capybara", ele = "Pink Elephant", lio = "Golden Lion", dra = "Ice Dragon", uni = "Rainbow Unicorn", gld = "Golden Dragon", phx = "Cosmic Phoenix" },
@@ -693,6 +860,12 @@ M.L = {
 		intro4 = "BOOM!! The ship breaks apart-",
 		intro5 = "Blub... blub... (everything fades to black)", intro6 = "",
 		welcome = "Welcome to Egg Isle! Tonight... sail out for your first egg",
+		guard_name = "Guardian {1}", guard_hit = "The guardian snatched your egg back to its nest!",
+		tut_title = "HOW TO PLAY", tut1 = "1. At NIGHT eggs appear - board a boat at the dock and sail to an island",
+		tut2 = "2. Walk to an egg and HOLD 3s to grab it (heavier = slower but earns more)",
+		tut3 = "3. Carry it to YOUR garden Incubator to hatch",
+		tut4 = "4. Try the menus: FUSE 3 same pets, TRAIL shop, free CHEST, LANG button",
+		tut_skip = "Skip", tut_end = "Finish",
 	},
 	th = {
 		day = "กลางวัน", night = "กลางคืน", carry = "ถือไข่ {1} กก. - เดิน {2}", holdbtn = "กดค้าง\nเก็บไข่",
@@ -721,6 +894,12 @@ M.L = {
 		intro4 = "ตู้ม!! เรือแตกแล้ว-",
 		intro5 = "ตุ๊บ... ตุ๊บ... (ทุกอย่างมืดลง)", intro6 = "",
 		welcome = "ยินดีต้อนรับสู่ Egg Isle! คืนนี้... ออกเรือไปหาไข่ใบแรก",
+		guard_name = "ผู้พิทักษ์ {1}", guard_hit = "ผู้พิทักษ์แย่งไข่คืนรังไปแล้ว!",
+		tut_title = "วิธีเล่น", tut1 = "1. กลางคืนไข่จะโผล่ - ขึ้นเรือที่ท่านแล่นไปเกาะ",
+		tut2 = "2. เดินใกล้ไข่แล้วกดค้าง 3 วิเพื่อเก็บ (หนัก=ช้าแต่เงินเยอะ)",
+		tut3 = "3. ถือไข่กลับเครื่องฟักที่สวนของคุณเพื่อฟัก",
+		tut4 = "4. ลองเมนู: ฟิวส์สัตว์เดียวกัน 3 ตัว, ร้านเทรล, หีบฟรี, ปุ่มภาษา",
+		tut_skip = "ข้าม", tut_end = "จบการสอน",
 	},
 	es = {
 		day = "DÍA", night = "NOCHE", carry = "Llevas huevo de {1} kg - paso {2}", holdbtn = "MANTEN\nPARA TOMAR",
@@ -749,6 +928,12 @@ M.L = {
 		intro4 = "BOOM!! El barco se rompe-",
 		intro5 = "Glub... glub... (todo se oscurece)", intro6 = "",
 		welcome = "Bienvenido a Egg Isle! Esta noche... zarpa por tu primer huevo",
+		guard_name = "Guardián {1}", guard_hit = "El guardián recuperó el huevo!",
+		tut_title = "CÓMO JUGAR", tut1 = "1. De NOCHE aparecen huevos - sube al barco y zarpa",
+		tut2 = "2. Acércate y MANTEN 3s (más pesado = más lento pero gana más)",
+		tut3 = "3. Llévalo a tu Incubadora para eclosionarlo",
+		tut4 = "4. Prueba: FUSIÓN, estelas, cofre gratis, idioma",
+		tut_skip = "Saltar", tut_end = "Listo",
 	},
 	pt = {
 		day = "DIA", night = "NOITE", carry = "Carregando ovo de {1} kg - passo {2}", holdbtn = "SEGURE\nPARA PEGAR",
@@ -777,6 +962,12 @@ M.L = {
 		intro4 = "BOOM!! O navio se parte-",
 		intro5 = "Blub... blub... (tudo escurece)", intro6 = "",
 		welcome = "Bem-vindo à Egg Isle! Esta noite... zarpe pelo seu primeiro ovo",
+		guard_name = "Guardião {1}", guard_hit = "O guardião levou o ovo de volta!",
+		tut_title = "COMO JOGAR", tut1 = "1. À NOITE ovos aparecem - entre no barco e zarpe",
+		tut2 = "2. Chegue perto e SEGURE 3s (mais pesado = mais lento, rende mais)",
+		tut3 = "3. Leve à sua Incubadora para chocar",
+		tut4 = "4. Explore: FUSÃO, rastros, baú grátis, idioma",
+		tut_skip = "Pular", tut_end = "Concluir",
 	},
 	id = {
 		day = "SIANG", night = "MALAM", carry = "Membawa telur {1} kg - jalan {2}", holdbtn = "TAHAN\nUNTUK AMBIL",
@@ -805,6 +996,12 @@ M.L = {
 		intro4 = "BOOM!! Kapal hancur-",
 		intro5 = "Blub... blub... (semua gelap)", intro6 = "",
 		welcome = "Selamat datang di Egg Isle! Malam ini... berlayarlah mencari telur pertamamu",
+		guard_name = "Penjaga {1}", guard_hit = "Penjaga merebut kembali telurnya!",
+		tut_title = "CARA MAIN", tut1 = "1. MALAM hari telur muncul - naik perahu dan berlayar",
+		tut2 = "2. Dekati telur dan TAHAN 3s (berat = lambat tapi hasil besar)",
+		tut3 = "3. Bawa ke Inkubator kebunmu untuk menetaskan",
+		tut4 = "4. Coba menu: FUSI, jejak, peti gratis, bahasa",
+		tut_skip = "Lewati", tut_end = "Selesai",
 	},
 	vi = {
 		day = "NGÀY", night = "ĐÊM", carry = "Đang ôm trứng {1} kg - đi {2}", holdbtn = "GIỮ\nĐỂ NHẶT",
@@ -833,6 +1030,12 @@ M.L = {
 		intro4 = "BOOM!! Thuyền vỡ tan-",
 		intro5 = "Ục... ục... (mọi thứ tối sầm)", intro6 = "",
 		welcome = "Chào mừng đến Egg Isle! Đêm nay... ra khơi tìm quả trứng đầu tiên",
+		guard_name = "Hộ Vệ {1}", guard_hit = "Hộ Vệ đã đoạt lại trứng!",
+		tut_title = "CÁCH CHƠI", tut1 = "1. Ban ĐÊM trứng xuất hiện - lên thuyền ra khơi",
+		tut2 = "2. Lại gần và GIỮ 3s (nặng = chậm nhưng thu nhiều hơn)",
+		tut3 = "3. Mang về máy ấp trong vườn để nở",
+		tut4 = "4. Thử menu: HỢP NHẤT, vết, rương miễn phí, ngôn ngữ",
+		tut_skip = "Bỏ qua", tut_end = "Xong",
 	},
 	zh = {
 		day = "白天", night = "夜晚", carry = "抱着 {1} kg 蛋 - 移速 {2}", holdbtn = "长按\n拾取",
@@ -861,6 +1064,12 @@ M.L = {
 		intro4 = "轰!! 船碎了-",
 		intro5 = "咕嘟... 咕嘟... (一切变黑)", intro6 = "",
 		welcome = "欢迎来到 Egg Isle! 今晚... 出发寻找你的第一颗蛋",
+		guard_name = "守护者 {1}", guard_hit = "守护者把蛋夺回巢穴了!",
+		tut_title = "玩法教学", tut1 = "1. 夜晚蛋会出现 - 上船出航",
+		tut2 = "2. 靠近蛋长按 3 秒 (越重越慢但收益更高)",
+		tut3 = "3. 抱回你花园的孵化器孵化",
+		tut4 = "4. 试试菜单: 融合, 拖尾, 免费宝箱, 语言",
+		tut_skip = "跳过", tut_end = "完成",
 	},
 	ko = {
 		day = "낮", night = "밤", carry = "알 {1} kg 드는 중 - 속도 {2}", holdbtn = "길게\n눌러 줍기",
@@ -889,6 +1098,12 @@ M.L = {
 		intro4 = "콰광!! 배가 부서진다-",
 		intro5 = "꿀렁... 꿀렁... (모두 어두워진다)", intro6 = "",
 		welcome = "Egg Isle에 오신 것을 환영합니다! 오늘 밤... 첫 알을 찾으러 출항하세요",
+		guard_name = "수호자 {1}", guard_hit = "수호자가 알을 되가져갔습니다!",
+		tut_title = "플레이 방법", tut1 = "1. 밤이 되면 알 등장 - 보트 타고 출항",
+		tut2 = "2. 알에 다가가 3초 길게 눌러 줍기 (무거울수록 느리지만 수익 업)",
+		tut3 = "3. 정원의 부화기로 가져가 부화",
+		tut4 = "4. 메뉴 탐색: 퓨전, 트레일, 무료 상자, 언어",
+		tut_skip = "건너뛰기", tut_end = "완료",
 	},
 	ja = {
 		day = "昼", night = "夜", carry = "卵 {1} kg 所持 - 歩速 {2}", holdbtn = "長押しで\n拾う",
@@ -917,6 +1132,12 @@ M.L = {
 		intro4 = "ドカーン!! 船が壊れる-",
 		intro5 = "ゴボ... ゴボ... (全てが暗転)", intro6 = "",
 		welcome = "Egg Isleへようこそ! 今夜... 最初の卵を探しに出航しよう",
+		guard_name = "ガーディアン {1}", guard_hit = "ガーディアンに卵を持ち去られた!",
+		tut_title = "あそびかた", tut1 = "1. 夜になると卵が出現 - ボートで出航",
+		tut2 = "2. 卵に近づき3秒長押しで拾う (重いほど遅いが収入増)",
+		tut3 = "3. 庭の孵化器へ運んで孵化",
+		tut4 = "4. メニューを試そう: 融合, トレイル, 無料宝箱, 言語",
+		tut_skip = "スキップ", tut_end = "完了",
 	},
 }
 
@@ -952,7 +1173,7 @@ return M
 ]=]
 local GUI = [=[
 -- ============================================================
--- EGG ISLE v5 · Gui5 (LocalScript → StarterPlayerScripts)
+-- EGG ISLE v6 · Gui6 (LocalScript → StarterPlayerScripts)
 -- i18n (EN default, auto-detect) · bag · 3 boards · hold-3s pickup
 -- FredokaOne + black stroke everywhere · no emojis
 -- ============================================================
@@ -1016,6 +1237,20 @@ local function compose(key, a, b, c)
 	if key == "fuse_ok" then return LM.tr(key, LM.petName(a)) end
 	if key == "trail_on" then return LM.tr(key, LM.tr("trail" .. tostring(a)), b) end
 	return LM.tr(key, a, b, c)
+end
+
+local function parseEn(en)
+	local base, big = en, false
+	if base:sub(1, 3) == "BIG" then big = true; base = base:sub(4) end
+	local i = base:find("@")
+	local w = nil
+	if i then w = tonumber(base:sub(i + 1)); base = base:sub(1, i - 1) end
+	return base, big, w
+end
+local function wMult(base, w)
+	local bw = LM.WEIGHT[LM.PET_R[base]]
+	if not w or not bw then return 1 end
+	return math.clamp(w / bw, 0.5, 2)
 end
 
 -- ---------- status bottom-left ----------
@@ -1347,27 +1582,66 @@ task.spawn(function()
 	end
 end)
 
+-- ---------- guardian signs (localized) ----------
+task.spawn(function()
+	local done = {}
+	while true do
+		task.wait(2)
+		local w3 = WS:FindFirstChild("World3")
+		if w3 then
+			for _, d in ipairs(w3:GetDescendants()) do
+				if d.Name == "GHead" and not done[d] then
+					done[d] = true
+					local pet = d:GetAttribute("Pet")
+					local bb = Instance.new("BillboardGui"); bb.Size = UDim2.new(0, 240, 0, 54); bb.AlwaysOnTop = true; bb.Parent = d
+					local t = txt(bb, UDim2.new(1, 0, 1, 0), UDim2.new(), Color3.fromRGB(255, 90, 90), Enum.TextXAlignment.Center)
+					task.spawn(function()
+						while d.Parent do
+							task.wait(1)
+							t.Text = LM.tr("guard_name", LM.petName(pet))
+						end
+					end)
+				end
+			end
+		end
+	end
+end)
+
+-- ---------- tutorial (skippable) ----------
+local tutBox = Instance.new("Frame"); tutBox.Size = UDim2.fromOffset(430, 130)
+tutBox.Position = UDim2.new(0.5, 0, 0, 190); tutBox.AnchorPoint = Vector2.new(0.5, 0)
+tutBox.BackgroundColor3 = Color3.fromRGB(20, 24, 38); tutBox.BackgroundTransparency = 0.15
+corner(tutBox, 14); stroke(tutBox, Color3.fromRGB(120, 220, 255), 3); tutBox.Parent = gui
+local tutTitle = txt(tutBox, UDim2.new(1, -10, 0, 30), UDim2.fromOffset(5, 4), Color3.fromRGB(120, 220, 255), Enum.TextXAlignment.Center)
+local tutTxt = txt(tutBox, UDim2.new(1, -14, 0, 50), UDim2.fromOffset(7, 34), Color3.fromRGB(255, 255, 255), Enum.TextXAlignment.Center)
+tutTxt.TextWrapped = true
+local tutSkip = Instance.new("TextButton"); tutSkip.Size = UDim2.fromOffset(120, 32)
+tutSkip.Position = UDim2.new(0.5, 0, 1, -38); tutSkip.AnchorPoint = Vector2.new(0.5, 0)
+tutSkip.BackgroundColor3 = Color3.fromRGB(90, 95, 110); tutSkip.Font = FONT; tutSkip.TextScaled = true
+tutSkip.TextColor3 = Color3.fromRGB(255, 255, 255); corner(tutSkip, 8); stroke(tutSkip, Color3.fromRGB(0, 0, 0), 2); tutSkip.Parent = tutBox
+tutSkip.Activated:Connect(function() evAct:FireServer("tutdone") end)
+local tutMax = 1
+
 -- ---------- refresh ----------
 local function petEntries()
 	local ok, counts = pcall(function() return Http:JSONDecode(plr:GetAttribute("PetsJSON") or "{}") end)
 	if not ok or type(counts) ~= "table" then return {} end
 	local list = {}
 	for en, cnt in pairs(counts) do
-		local base, big = en, false
-		if base:sub(1, 3) == "BIG" then big = true; base = base:sub(4) end
-		local pw = LM.PWR[base] or 1
-		table.insert(list, { en = en, base = base, big = big, cnt = cnt, pw = pw * (big and 2 or 1) })
+		local base, big, w = parseEn(en)
+		local pw = (LM.PWR[base] or 1) * wMult(base, w)
+		table.insert(list, { en = en, base = base, big = big, cnt = cnt, w = w, pw = pw * (big and 2 or 1) })
 	end
 	table.sort(list, function(a, b) return a.pw > b.pw end)
 	return list
 end
 local SELLV = { [1] = 50, [3] = 150, [10] = 500, [40] = 2000, [200] = 10000 }
 local function sellRow(parent, entry)
-	local val = (SELLV[LM.PWR[entry.base] or 1] or 50) * (entry.big and 3 or 1)
+	local val = math.floor((SELLV[LM.PWR[entry.base] or 1] or 50) * wMult(entry.base, entry.w) * (entry.big and 3 or 1))
 	local row = Instance.new("Frame"); row.Size = UDim2.new(1, -4, 0, 34)
 	row.BackgroundColor3 = Color3.fromRGB(34, 40, 60); corner(row, 8); row.Parent = parent
 	local lab = txt(row, UDim2.new(0.62, 0, 1, 0), UDim2.fromOffset(6, 0), Color3.fromRGB(255, 255, 255))
-	lab.Text = LM.petName(entry.base) .. (entry.big and (" " .. LM.tr("big")) or "") .. " x" .. entry.cnt
+	lab.Text = LM.petName(entry.base) .. (entry.big and (" " .. LM.tr("big")) or "") .. (entry.w and (" " .. entry.w .. "kg") or "") .. " x" .. entry.cnt
 	local sb = Instance.new("TextButton"); sb.Size = UDim2.new(0.34, -4, 0.8, 0)
 	sb.Position = UDim2.new(0.65, 0, 0.1, 0); sb.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
 	sb.Font = FONT; sb.TextScaled = true; sb.Text = LM.tr("sell") .. " $" .. short(val)
@@ -1431,7 +1705,7 @@ local function refresh()
 	local pl2 = Instance.new("UIListLayout"); pl2.Padding = UDim.new(0, 5); pl2.Parent = petScroll
 	for _, e in ipairs(entries) do
 		if e.activeCnt and e.activeCnt > 0 then
-			sellRow(petScroll, { en = e.en, base = e.base, big = e.big, cnt = e.activeCnt })
+			sellRow(petScroll, { en = e.en, base = e.base, big = e.big, cnt = e.activeCnt, w = e.w })
 		end
 	end
 	bagInfo.Text = LM.tr("bag_info", bagN)
@@ -1440,7 +1714,7 @@ local function refresh()
 	for _, e in ipairs(entries) do
 		local left = e.cnt - (e.activeCnt or 0)
 		if left > 0 then
-			sellRow(bagScroll, { en = e.en, base = e.base, big = e.big, cnt = left })
+			sellRow(bagScroll, { en = e.en, base = e.base, big = e.big, cnt = left, w = e.w })
 		end
 	end
 	-- index
@@ -1458,19 +1732,21 @@ local function refresh()
 	fuseInfo.Text = LM.tr("fuse_info")
 	fuseScroll:ClearAllChildren()
 	local fl2 = Instance.new("UIListLayout"); fl2.Padding = UDim.new(0, 5); fl2.Parent = fuseScroll
+	local groups = {}
 	for _, e in ipairs(entries) do
-		if not e.big then
-			local row = Instance.new("Frame"); row.Size = UDim2.new(1, -4, 0, 36)
-			row.BackgroundColor3 = Color3.fromRGB(34, 40, 60); corner(row, 8); row.Parent = fuseScroll
-			local lab = txt(row, UDim2.new(0.55, 0, 1, 0), UDim2.fromOffset(6, 0), Color3.fromRGB(255, 255, 255))
-			lab.Text = LM.petName(e.base) .. " " .. e.cnt .. "/3"
-			local fb = Instance.new("TextButton"); fb.Size = UDim2.new(0.4, -4, 0.8, 0)
-			fb.Position = UDim2.new(0.6, 0, 0.1, 0)
-			fb.BackgroundColor3 = e.cnt >= 3 and Color3.fromRGB(88, 200, 60) or Color3.fromRGB(90, 95, 110)
-			fb.Font = FONT; fb.TextScaled = true; fb.Text = LM.tr("fuse_btn")
-			fb.TextColor3 = Color3.fromRGB(255, 255, 255); corner(fb, 6); fb.Parent = row
-			fb.Activated:Connect(function() evAct:FireServer("fuse", e.base) end)
-		end
+		if not e.big then groups[e.base] = (groups[e.base] or 0) + e.cnt end
+	end
+	for base, cnt in pairs(groups) do
+		local row = Instance.new("Frame"); row.Size = UDim2.new(1, -4, 0, 36)
+		row.BackgroundColor3 = Color3.fromRGB(34, 40, 60); corner(row, 8); row.Parent = fuseScroll
+		local lab = txt(row, UDim2.new(0.55, 0, 1, 0), UDim2.fromOffset(6, 0), Color3.fromRGB(255, 255, 255))
+		lab.Text = LM.petName(base) .. " " .. cnt .. "/3"
+		local fb = Instance.new("TextButton"); fb.Size = UDim2.new(0.4, -4, 0.8, 0)
+		fb.Position = UDim2.new(0.6, 0, 0.1, 0)
+		fb.BackgroundColor3 = cnt >= 3 and Color3.fromRGB(88, 200, 60) or Color3.fromRGB(90, 95, 110)
+		fb.Font = FONT; fb.TextScaled = true; fb.Text = LM.tr("fuse_btn")
+		fb.TextColor3 = Color3.fromRGB(255, 255, 255); corner(fb, 6); fb.Parent = row
+		fb.Activated:Connect(function() evAct:FireServer("fuse", base) end)
 	end
 	-- trail buttons
 	for i, t in ipairs(TRAIL_META) do
@@ -1478,6 +1754,17 @@ local function refresh()
 	end
 	chestBtn.Text = LM.tr("open_chest")
 	chestTitle.Text = LM.tr("t_chest")
+	-- tutorial auto-advance
+	local tutOn = (plr:GetAttribute("Tut") or 0) == 1
+	tutBox.Visible = tutOn
+	if tutOn then
+		if (plr:GetAttribute("OnBoat") or 0) > 0 then tutMax = math.max(tutMax, 2) end
+		if (plr:GetAttribute("Carrying") or 0) > 0 then tutMax = math.max(tutMax, 3) end
+		if #entries > 0 then tutMax = math.max(tutMax, 4) end
+		tutTitle.Text = LM.tr("tut_title") .. " " .. tutMax .. "/4"
+		tutTxt.Text = LM.tr("tut" .. tutMax)
+		tutSkip.Text = tutMax >= 4 and LM.tr("tut_end") or LM.tr("tut_skip")
+	end
 end
 task.spawn(function() while true do task.wait(0.5) pcall(refresh) end end)
 ]=]
@@ -1639,7 +1926,7 @@ task.spawn(function()
 end)
 ]=]
 local toolbar = plugin:CreateToolbar("EggIsle")
-local btn = toolbar:CreateButton("Load EggIsle", "Put latest v5 code into the game", "")
+local btn = toolbar:CreateButton("Load EggIsle", "Put latest v6 code into the game", "")
 btn.Click:Connect(function()
 	local rs = game:GetService("ReplicatedStorage")
 	local m = rs:FindFirstChild("EggLang")
@@ -1658,5 +1945,5 @@ btn.Click:Connect(function()
 	it.Source = INTRO
 	local mb = ss:FindFirstChild("MapBuilder") if mb then mb:Destroy() end
 	local ag = sp:FindFirstChild("AdminGui") if ag then ag:Destroy() end
-	print("EGG ISLE v5 LOADED OK")
+	print("EGG ISLE v6 LOADED OK")
 end)
