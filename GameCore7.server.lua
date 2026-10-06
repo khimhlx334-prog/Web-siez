@@ -16,6 +16,7 @@ local store = DataStoreService:GetDataStore("EggIsleV7")
 
 local function killOld(name) local o = script.Parent:FindFirstChild(name) if o then o:Destroy() end end
 killOld("MapBuilder")
+killOld("EggCore")
 
 -- ---------- สัตว์ 22 ชนิด (isl="all" = โผล่ทุกเกาะ) ----------
 local PETS = {
@@ -415,11 +416,9 @@ for _, isl in ipairs(ISLANDS) do
 		for i, gp in ipairs(GPOS) do
 			local base = part(Vector3.new(14, 0.6, 14), isl.pos + gp + Vector3.new(0, top + 0.2, 0), Color3.fromRGB(120, 90, 60), Enum.Material.Wood)
 			base.Name = "Garden" .. i
-			sign3d(base, "Garden " .. i, 120, 40)
 		end
 		local chest = part(Vector3.new(4, 3, 3), isl.pos + Vector3.new(20, top + 1.5, 20), Color3.fromRGB(255, 200, 60), Enum.Material.Metal)
 		chest.Name = "GiftChest"
-		sign3d(chest, "Free Chest", 100, 40, Color3.fromRGB(255, 240, 150))
 		local bdefs = { { "BoardA", -26, 8 }, { "BoardB", -26, 26 }, { "BoardC", -26, 44 } }
 		for _, bd in ipairs(bdefs) do
 			local b = part(Vector3.new(12, 14, 1), isl.pos + Vector3.new(bd[2], top + 8, bd[3]), Color3.fromRGB(60, 140, 220), Enum.Material.Metal)
@@ -441,7 +440,6 @@ for _, isl in ipairs(ISLANDS) do
 			end
 		end
 		local post = part(Vector3.new(2, 8, 2), isl.pos + Vector3.new(0, top + 4, isl.r - 14), Color3.fromRGB(140, 100, 60), Enum.Material.Wood)
-		sign3d(post, "Island " .. isl.n .. " " .. isl.label .. "\nsteal speed rec x" .. isl.rec, 260, 90, Color3.fromRGB(255, 240, 150))
 		local dir = (Vector3.new(0, 0, 0) - isl.pos); dir = Vector3.new(dir.X, 0, dir.Z).Unit
 		part(Vector3.new(8, 1, 30), isl.pos + dir * (isl.r + 10) + Vector3.new(0, 2.5, 0), Color3.fromRGB(140, 100, 60), Enum.Material.Wood)
 	end

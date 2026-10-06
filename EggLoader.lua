@@ -18,6 +18,7 @@ local store = DataStoreService:GetDataStore("EggIsleV7")
 
 local function killOld(name) local o = script.Parent:FindFirstChild(name) if o then o:Destroy() end end
 killOld("MapBuilder")
+killOld("EggCore")
 
 -- ---------- สัตว์ 22 ชนิด (isl="all" = โผล่ทุกเกาะ) ----------
 local PETS = {
@@ -417,11 +418,9 @@ for _, isl in ipairs(ISLANDS) do
 		for i, gp in ipairs(GPOS) do
 			local base = part(Vector3.new(14, 0.6, 14), isl.pos + gp + Vector3.new(0, top + 0.2, 0), Color3.fromRGB(120, 90, 60), Enum.Material.Wood)
 			base.Name = "Garden" .. i
-			sign3d(base, "Garden " .. i, 120, 40)
 		end
 		local chest = part(Vector3.new(4, 3, 3), isl.pos + Vector3.new(20, top + 1.5, 20), Color3.fromRGB(255, 200, 60), Enum.Material.Metal)
 		chest.Name = "GiftChest"
-		sign3d(chest, "Free Chest", 100, 40, Color3.fromRGB(255, 240, 150))
 		local bdefs = { { "BoardA", -26, 8 }, { "BoardB", -26, 26 }, { "BoardC", -26, 44 } }
 		for _, bd in ipairs(bdefs) do
 			local b = part(Vector3.new(12, 14, 1), isl.pos + Vector3.new(bd[2], top + 8, bd[3]), Color3.fromRGB(60, 140, 220), Enum.Material.Metal)
@@ -443,7 +442,6 @@ for _, isl in ipairs(ISLANDS) do
 			end
 		end
 		local post = part(Vector3.new(2, 8, 2), isl.pos + Vector3.new(0, top + 4, isl.r - 14), Color3.fromRGB(140, 100, 60), Enum.Material.Wood)
-		sign3d(post, "Island " .. isl.n .. " " .. isl.label .. "\nsteal speed rec x" .. isl.rec, 260, 90, Color3.fromRGB(255, 240, 150))
 		local dir = (Vector3.new(0, 0, 0) - isl.pos); dir = Vector3.new(dir.X, 0, dir.Z).Unit
 		part(Vector3.new(8, 1, 30), isl.pos + dir * (isl.r + 10) + Vector3.new(0, 2.5, 0), Color3.fromRGB(140, 100, 60), Enum.Material.Wood)
 	end
@@ -1399,7 +1397,7 @@ local function short(n)
 	if s:sub(-2) == ".0" then s = s:sub(1, -3) end
 	return s .. units[i]
 end
-local function stroke(p, c, t) local s = Instance.new("UIStroke"); s.Color = c or Color3.fromRGB(0, 0, 0); s.Thickness = t or 2; s.Parent = p end
+local function stroke(p, c, t) local s = Instance.new("UIStroke"); s.Color = c or Color3.fromRGB(0, 0, 0); s.Thickness = t or 3; s.Parent = p end
 local function corner(p, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 10); c.Parent = p end
 local function txt(parent, size, pos, color, align)
 	local t = Instance.new("TextLabel"); t.Size = size; t.Position = pos or UDim2.new()
@@ -2117,7 +2115,17 @@ local eyeR = prt(Vector3.new(0.8, 0.8, 0.8), Vector3.new(15.5, -6.5, 26.5), Colo
 
 local cam = WS.CurrentCamera
 cam.CameraType = Enum.CameraType.Scriptable
+cam.CFrame = CFrame.new(base + Vector3.new(0, 7, 16), base + Vector3.new(0, 3, -10))
 hum.WalkSpeed = 0
+-- ล็อคกล้องกันสคริปต์อื่น/เอนจินแย่งคืนมุมมองระหว่างคัทซีน
+task.spawn(function()
+	while not done do
+		task.wait(0.2)
+		if cam.CameraType ~= Enum.CameraType.Scriptable then
+			cam.CameraType = Enum.CameraType.Scriptable
+		end
+	end
+end)
 
 local done = false
 local function finish()
@@ -2217,13 +2225,18 @@ btn.Click:Connect(function()
 	if not s then s = Instance.new("Script"); s.Name = "Script"; s.Parent = ss end
 	s.Source = CORE
 	local sp = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts")
+	-- ล้างสคริปต์ชุดเก่า v1/v2 ที่ค้างอยู่ในเพลส (กัน UI ซ้อน/กล้องโดนแย่ง)
+	for _, nm in ipairs({ "EggCore", "MapBuilder", "AdminGui" }) do
+		local o = ss:FindFirstChild(nm) if o then o:Destroy() end
+	end
+	for _, nm in ipairs({ "EggGui", "AdminGui" }) do
+		local o = sp:FindFirstChild(nm) if o then o:Destroy() end
+	end
 	local l = sp:FindFirstChild("LocalScript")
 	if not l then l = Instance.new("LocalScript"); l.Name = "LocalScript"; l.Parent = sp end
 	l.Source = GUI
 	local it = sp:FindFirstChild("Intro")
 	if not it then it = Instance.new("LocalScript"); it.Name = "Intro"; it.Parent = sp end
 	it.Source = INTRO
-	local mb = ss:FindFirstChild("MapBuilder") if mb then mb:Destroy() end
-	local ag = sp:FindFirstChild("AdminGui") if ag then ag:Destroy() end
 	print("EGG ISLE v7 LOADED OK")
 end)

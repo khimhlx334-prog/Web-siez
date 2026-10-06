@@ -66,7 +66,17 @@ local eyeR = prt(Vector3.new(0.8, 0.8, 0.8), Vector3.new(15.5, -6.5, 26.5), Colo
 
 local cam = WS.CurrentCamera
 cam.CameraType = Enum.CameraType.Scriptable
+cam.CFrame = CFrame.new(base + Vector3.new(0, 7, 16), base + Vector3.new(0, 3, -10))
 hum.WalkSpeed = 0
+-- ล็อคกล้องกันสคริปต์อื่น/เอนจินแย่งคืนมุมมองระหว่างคัทซีน
+task.spawn(function()
+	while not done do
+		task.wait(0.2)
+		if cam.CameraType ~= Enum.CameraType.Scriptable then
+			cam.CameraType = Enum.CameraType.Scriptable
+		end
+	end
+end)
 
 local done = false
 local function finish()

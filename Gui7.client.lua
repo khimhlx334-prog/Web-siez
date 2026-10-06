@@ -43,7 +43,7 @@ local function short(n)
 	if s:sub(-2) == ".0" then s = s:sub(1, -3) end
 	return s .. units[i]
 end
-local function stroke(p, c, t) local s = Instance.new("UIStroke"); s.Color = c or Color3.fromRGB(0, 0, 0); s.Thickness = t or 2; s.Parent = p end
+local function stroke(p, c, t) local s = Instance.new("UIStroke"); s.Color = c or Color3.fromRGB(0, 0, 0); s.Thickness = t or 3; s.Parent = p end
 local function corner(p, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 10); c.Parent = p end
 local function txt(parent, size, pos, color, align)
 	local t = Instance.new("TextLabel"); t.Size = size; t.Position = pos or UDim2.new()
