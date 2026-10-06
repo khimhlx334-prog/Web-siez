@@ -1,55 +1,85 @@
 -- ============================================================
--- EGG RAID · Systems/PlayerData (ModuleScript → ServerScriptService/Systems)
--- NEW profile store for modular systems (key prefix EGGRAID_).
--- The legacy monolith keeps its own store until migrated.
--- Server-authoritative. Clients never write profiles.
+-- EGG RAID · Systems/PlayerData (ModuleScript → ServerScriptService/Systems/PlayerData)
+-- Session cache + load/save of the MODULAR profile (EGGRAID_ key).
+-- Saves go through the queued DataStore layer — never per-change.
+-- Server-authoritative: clients can never write profiles.
 -- ============================================================
-local DataStoreService = game:GetService("DataStoreService")
-local Players = game:GetService("DataStoreService") and game:GetService("Players")
+local Players = game:GetService("Players")
 
 local PlayerData = {}
-local store = DataStoreService:GetDataStore("EGGRAID_Profiles_v1")
+local DataStore, Constants
 local session = {}
 
 local function defaultProfile()
 	return {
 		money = 0,
-		eggs = {},        -- stored eggs {pet, weight, readyAt}
-		pets = {},        -- pet entries "id@weight" / "BIGid@weight"
+		eggs = {},
+		pets = {},
 		baseLvl = 1,
-		quests = {},      -- [questId] = progress
-		lastDaily = 0,
-		stats = { steals = 0, hatches = 0, sells = 0 },
+		quests = {},
+		daily = { lastClaim = 0, streak = 0 },
+		upgrades = {},
+		settings = {},
+		stats = { steals = 0, hatches = 0, sells = 0, playSeconds = 0 },
 	}
+end
+
+-- late binding so require order stays simple
+local function deps()
+	if not DataStore then
+		local ss = game:GetService("ServerScriptService"):WaitForChild("Systems")
+		DataStore = require(ss:WaitForChild("DataStore"))
+		local rs = game:GetService("ReplicatedStorage")
+		Constants = require(rs:WaitForChild("Shared"):WaitForChild("Constants"))
+	end
 end
 
 function PlayerData.Get(plr)
 	local uid = plr.UserId
-	if session[uid] then return session[uid] end
-	local ok, got = pcall(function() return store:GetAsync("u_" .. uid) end)
+	local s = session[uid]
+	if s then return s.profile end
+	deps()
+	local loaded = nil
+	local ok, data = pcall(DataStore.Load, uid)
+	if ok and type(data) == "table" then loaded = data end
 	local d = defaultProfile()
-	if ok and type(got) == "table" then
-		for k, v in pairs(got) do d[k] = v end
+	if loaded then
+		for _, field in ipairs(Constants.ProfileFields) do
+			if loaded[field] ~= nil then d[field] = loaded[field] end
+		end
 	end
-	d.stats = d.stats or defaultProfile().stats
-	session[uid] = d
+	session[uid] = { profile = d, joinedAt = os.time() }
 	return d
 end
 
-function PlayerData.Save(plr)
-	local d = session[plr.UserId]
-	if not d then return end
-	pcall(function() store:SetAsync("u_" .. plr.UserId, d) end)
+function PlayerData.MarkDirty(plr)
+	local s = session[plr.UserId]
+	if not s then return end
+	deps()
+	DataStore.QueueSave(plr.UserId, function()
+		-- playtime folded in at save time
+		s.profile.stats = s.profile.stats or {}
+		s.profile.stats.playSeconds = (s.profile.stats.playSeconds or 0) + math.floor(os.time() - s.joinedAt)
+		s.joinedAt = os.time()
+		return s.profile
+	end)
+end
+
+function PlayerData.SaveNow(plr)
+	local s = session[plr.UserId]
+	if not s then return end
+	deps()
+	s.profile.stats = s.profile.stats or {}
+	s.profile.stats.playSeconds = (s.profile.stats.playSeconds or 0) + math.floor(os.time() - s.joinedAt)
+	s.joinedAt = os.time()
+	DataStore.SaveNow(plr.UserId, function() return s.profile end)
 end
 
 function PlayerData.Release(plr)
-	PlayerData.Save(plr)
+	PlayerData.SaveNow(plr)
 	session[plr.UserId] = nil
 end
 
 Players.PlayerRemoving:Connect(PlayerData.Release)
-game:BindToClose(function()
-	for _, p in ipairs(Players:GetPlayers()) do PlayerData.Save(p) end
-end)
 
 return PlayerData

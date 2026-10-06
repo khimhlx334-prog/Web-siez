@@ -9,7 +9,6 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GamepassConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("GamepassConfig"))
-local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
 
 local Gamepasses = {}
 local cache = {} -- [userId][key] = bool
@@ -34,10 +33,12 @@ local function onPrompt(plr, key)
 end
 
 function Gamepasses.Init()
-	local r = Remotes.Event(Remotes.Names.RequestPromptGP, true)
-	r.OnServerEvent:Connect(function(plr, key)
-		if type(key) == "string" then onPrompt(plr, key) end
-	end)
+	-- routed via the CENTRAL RPC channel (no dedicated remote)
+	local RPC = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RPC"))
+	RPC.Register("PromptGamepass", {
+		args = { "string" },
+		run = function(plr, key) onPrompt(plr, key) end,
+	})
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, id, purchased)
 		if purchased then
 			for _, g in ipairs(GamepassConfig.Catalog) do

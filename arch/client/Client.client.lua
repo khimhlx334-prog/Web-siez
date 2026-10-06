@@ -1,35 +1,29 @@
 -- ============================================================
--- EGG RAID · Client (LocalScript → StarterPlayerScripts)
--- Thin client bootstrap for the modular systems.
---  * May only REQUEST actions via Remotes (server validates).
---  * Never trusts or stores authoritative state.
--- The legacy UI (Gui7) stays live until the UI migration task.
+-- EGG RAID · Client (LocalScript → StarterPlayerScripts/Client)
+-- Client bootstrap. Controllers live in StarterPlayerScripts/
+-- Controllers. The client only ever REQUESTS; the server decides.
+-- The legacy UI (LocalScript) and intro (Intro) keep running —
+-- nothing here duplicates them.
 -- ============================================================
+local Controllers = require(script.Parent:WaitForChild("Controllers"):WaitForChild("Init"))
+
+Controllers.InitAll()
+
+local Client = {
+	Controllers = Controllers,
+	Player = game:GetService("Players").LocalPlayer,
+}
+
+-- Request helpers (all go through the central RPC channel)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local plr = Players.LocalPlayer
+local RPC = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RPC"))
+Client.Request = RPC.Call
 
-local shared = ReplicatedStorage:WaitForChild("Shared")
-local Remotes = require(shared:WaitForChild("Remotes"))
-local GamepassConfig = require(shared:WaitForChild("Config"):WaitForChild("GamepassConfig"))
-
-local Client = {}
-
--- Ask the server to show the OFFICIAL gamepass purchase prompt.
--- This is the ONLY gamepass-related thing a client may do.
+local GPConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("GamepassConfig"))
 function Client.PromptGamepass(key)
-	if not GamepassConfig.Get(key) then return end
-	local r = Remotes.Event(Remotes.Names.RequestPromptGP, false)
-	if r then r:FireServer(key) end
+	if not GPConfig.Get(key) then return end
+	RPC.Call("PromptGamepass", key)
 end
 
--- Generic request helper for future systems (server-validated)
-function Client.Request(name, ...)
-	local r = Remotes.Event(name, false)
-	if r then r:FireServer(...) end
-end
-
-Client.Player = plr
-_G.EGGRAID_CLIENT = Client -- temporary handle for the future UI layer
-
+_G.EGGRAID_CLIENT = Client
 print("EGG RAID CLIENT READY")

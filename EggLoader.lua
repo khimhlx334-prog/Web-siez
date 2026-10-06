@@ -1,4 +1,4 @@
--- EGG RAID LOADER (plugin) — กดปุ่ม Load EggIsle ในแถบเครื่องมือ
+-- EGG RAID LOADER (plugin)
 local CORE = [=[
 -- ============================================================
 -- EGG ISLE v7 · GameCore7 (Script → ServerScriptService)
@@ -2213,7 +2213,7 @@ task.spawn(function()
 	task.delay(5, function() g2:Destroy() end)
 end)
 ]=]
-local GAMECFG = [=[
+local CFG_GAME = [=[
 -- ============================================================
 -- EGG RAID · GameConfig (ModuleScript → ReplicatedStorage/Shared/Config)
 -- Central tunables for ALL future systems. Server + client may read.
@@ -2268,7 +2268,7 @@ GameConfig.DefaultLanguage = "en"
 
 return GameConfig
 ]=]
-local GPCFG = [=[
+local CFG_GP = [=[
 -- ============================================================
 -- EGG RAID · GamepassConfig (ModuleScript → ReplicatedStorage/Shared/Config)
 -- Interface for the FUTURE official Gamepass shop.
@@ -2312,7 +2312,7 @@ end
 
 return GamepassConfig
 ]=]
-local REM = [=[
+local SH_REMOTES = [=[
 -- ============================================================
 -- EGG RAID · Remotes (ModuleScript → ReplicatedStorage/Shared)
 -- Single registry for every RemoteEvent/RemoteFunction.
@@ -2377,134 +2377,475 @@ Remotes.Names = {
 
 return Remotes
 ]=]
-local MAIN = [=[
+local SH_TYPES = [=[
 -- ============================================================
--- EGG RAID · Main (Script → ServerScriptService)
--- Architecture bootstrap: creates the folder skeleton, wires the
--- modular systems. Does NOT touch the legacy monolith (it keeps
--- running the live game until systems are migrated, Task 2+).
+-- EGG RAID · Shared/Types (ModuleScript → ReplicatedStorage/Shared/Types)
+-- Shared type definitions for every future system (documentation
+-- contracts; Luau type checking picks these up automatically).
 -- ============================================================
-local ServerScriptService = game:GetService("ServerScriptService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StarterGui = game:GetService("StarterGui")
-local Workspace = game:GetService("Workspace")
+local Types = {}
 
-local function folderAt(parent, name)
-	local f = parent:FindFirstChild(name)
-	if not f then
-		f = Instance.new("Folder")
-		f.Name = name
-		f.Parent = parent
-	end
-	return f
-end
+--[[
+	type EggId = string
+	type PetEntry = string          -- "<petId>@<weightKg>" | "BIG<petId>@<weightKg>"
+	type RarityId = "common" | "uncommon" | "rare" | "epic" | "legendary"
+		| "mythic" | "secret" | "divine" | "mystery" | "trash"
 
--- ReplicatedStorage skeleton
-local shared = folderAt(ReplicatedStorage, "Shared")
-folderAt(shared, "Config")
-folderAt(ReplicatedStorage, "Remotes")
-folderAt(ReplicatedStorage, "Assets")
+	type EggInstance = {
+		rarity: RarityId,
+		weightKg: number,           -- server-rolled only
+		spawnPos: Vector3,
+		spawnedAt: number,          -- os.time()
+		islandId: string,
+		carriedBy: number?,         -- UserId or nil
+	}
 
--- Workspace skeleton (folders only — no parts)
-for _, n in ipairs({ "Map", "Bases", "EggAreas", "EggSpawns", "GamepassShop", "Spawn" }) do
-	folderAt(Workspace, n)
-end
+	type PetInstance = {
+		petId: string,
+		rarity: RarityId,
+		level: number,
+		weightKg: number,
+		isBig: boolean,
+	}
 
--- StarterGui home for the future modular UI
-folderAt(StarterGui, "MainUI")
+	type PlayerProfile = {
+		money: number,
+		eggs: { EggInstance },      -- storage (base), server-owned
+		pets: { PetEntry },
+		baseLvl: number,
+		quests: { [string]: number },
+		daily: { lastClaim: number, streak: number },
+		upgrades: { [string]: number },
+		settings: { [string]: string | number | boolean },
+		stats: { steals: number, hatches: number, sells: number, playSeconds: number },
+	}
 
--- Systems live as sibling ModuleScripts
-local systemsRoot = ServerScriptService:WaitForChild("Systems")
-local function sys(name)
-	return require(systemsRoot:WaitForChild(name))
-end
+	type QuestDef = {
+		id: string,
+		goal: number,
+		rewardMoney: number,
+		nameKey: string,
+		stat: string,
+	}
 
-local PlayerData   = sys("PlayerData")
-local Economy      = sys("Economy")
-local Eggs         = sys("Eggs")
-local Bases        = sys("Bases")
-local Pets         = sys("Pets")
-local Zones        = sys("Zones")
-local Quests       = sys("Quests")
-local Rewards      = sys("Rewards")
-local Leaderboards = sys("Leaderboards")
-local Gamepasses   = sys("Gamepasses")
-local Admin        = sys("Admin")
-local AntiCheat    = sys("AntiCheat")
+	type ZoneDef = {
+		id: string,
+		n: number,
+		pos: { number },            -- {x, y, z} center
+		r: number,                  -- radius studs
+		unlock: number,             -- unlock cost / requirement tag
+	}
 
--- Wire systems that need remotes/events at boot
-Gamepasses.Init()
+	type GamepassDef = {
+		key: string,
+		GamepassId: number,         -- 0 = not configured, never grants
+		PriceRobux: number,
+		NameKey: string,
+	}
 
--- Expose the system registry to future server scripts (Task 2+):
--- they can read this Script's globals via require-free access pattern,
--- or simply require the System ModuleScripts directly (recommended).
-RA_REGISTRY = {
-	PlayerData = PlayerData, Economy = Economy, Eggs = Eggs, Bases = Bases,
-	Pets = Pets, Zones = Zones, Quests = Quests, Rewards = Rewards,
-	Leaderboards = Leaderboards, Gamepasses = Gamepasses, Admin = Admin,
-	AntiCheat = AntiCheat,
+	type DeveloperProductDef = {
+		key: string,
+		ProductId: number,          -- 0 = not configured
+		PriceRobux: number,
+		GrantMoney: number,
+	}
+
+	type ScheduledEventDef = {
+		name: string,
+		kind: string,               -- "daily" | "double_money"
+		cadenceMin: number,
+	}
+
+	type NotificationPayload = {
+		text: string,               -- plain text (UI colors it; no emoji)
+		kind: string?,              -- "info" | "success" | "warning" | "error"
+		duration: number?,
+	}
+]]
+
+Types.VERSION = 1
+return Types
+]=]
+local SH_CONST = [=[
+-- ============================================================
+-- EGG RAID · Shared/Constants (ModuleScript → ReplicatedStorage/Shared/Constants)
+-- Central names/limits shared by server + client. No logic here.
+-- ============================================================
+local Constants = {
+	RemoteNames = {
+		RPC          = "RA_RPC",   -- central client→server request channel
+		Notification = "RA_Notif", -- server→client notifications
+		Settings     = "RA_Settings", -- client→server settings push
+	},
+	DataStores = {
+		Profiles = "EGGRAID_Profiles_v1",
+	},
+	Limits = {
+		MaxMoney       = 1e12,
+		MaxEggsStorage = 200,
+		MaxPets        = 500,
+		MaxCarryEggs   = 1,
+	},
+	Defaults = {
+		StartMoney = 150,
+		BaseLvl    = 1,
+	},
+	ProfileFields = { "money", "eggs", "pets", "baseLvl", "quests", "daily", "upgrades", "settings", "stats" },
 }
 
-print("EGG RAID ARCHITECTURE READY · 12 systems wired")
+return Constants
 ]=]
-local SYS_PLAYERDATA = [=[
+local SH_UTILS = [=[
 -- ============================================================
--- EGG RAID · Systems/PlayerData (ModuleScript → ServerScriptService/Systems)
--- NEW profile store for modular systems (key prefix EGGRAID_).
--- The legacy monolith keeps its own store until migrated.
--- Server-authoritative. Clients never write profiles.
+-- EGG RAID · Shared/Utils (ModuleScript → ReplicatedStorage/Shared/Utils)
+-- Small reusable helpers. Pure functions, no services, no loops.
 -- ============================================================
-local DataStoreService = game:GetService("DataStoreService")
-local Players = game:GetService("DataStoreService") and game:GetService("Players")
+local Utils = {}
+
+function Utils.clamp(v, lo, hi)
+	if type(v) ~= "number" then return lo end
+	return math.clamp(v, lo, hi)
+end
+
+function Utils.round(v)
+	return math.floor((v or 0) + 0.5)
+end
+
+-- Weighted pick from { {item, weight} } — returns item or nil
+function Utils.weightedPick(entries)
+	local total = 0
+	for _, e in ipairs(entries) do total += e.weight end
+	if total <= 0 then return nil end
+	local r = math.random() * total
+	for _, e in ipairs(entries) do
+		r -= e.weight
+		if r <= 0 then return e.item end
+	end
+	return entries[#entries].item
+end
+
+function Utils.deepCopy(t)
+	if type(t) ~= "table" then return t end
+	local out = {}
+	for k, v in pairs(t) do out[k] = Utils.deepCopy(v) end
+	return out
+end
+
+function Utils.distance3(a, b)
+	if not a or not b then return math.huge end
+	return (a - b).Magnitude
+end
+
+function Utils.distanceXZ(a, b)
+	if not a or not b then return math.huge end
+	local dx = a.X - b.X
+	local dz = a.Z - b.Z
+	return math.sqrt(dx * dx + dz * dz)
+end
+
+function Utils.formatNumber(n)
+	n = Utils.round(n or 0)
+	if n >= 1e9 then return string.format("%.2fB", n / 1e9) end
+	if n >= 1e6 then return string.format("%.2fM", n / 1e6) end
+	if n >= 1e3 then return string.format("%.1fK", n / 1e3) end
+	return tostring(n)
+end
+
+-- Short collision-safe id (no HttpService needed)
+function Utils.newId()
+	return string.format("%x-%s", os.time(), string.rep("x", 4):gsub("x", function()
+		return string.char(97 + math.random(0, 25))
+	end))
+end
+
+return Utils
+]=]
+local SH_LOC = [=[
+-- ============================================================
+-- EGG RAID · Shared/Localization (ModuleScript → ReplicatedStorage/Shared/Localization)
+-- Facade over the legacy EggLang module (ReplicatedStorage.EggLang).
+-- Single entry point for ALL future UI text. Never inline strings.
+-- ============================================================
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Localization = {}
+local langModule = ReplicatedStorage:WaitForChild("EggLang", 15)
+local dict = langModule and require(langModule) or nil
+
+Localization.Default = "en"
+Localization.Current = "en"
+
+function Localization.SetLanguage(code)
+	if dict and dict[code] then
+		Localization.Current = code
+		return true
+	end
+	return false
+end
+
+-- T(key) or T(code, key) — returns translated text, falls back to en, then key
+function Localization.T(a, b)
+	local code, key
+	if b == nil then code, key = Localization.Current, a else code, key = a, b end
+	if not dict then return tostring(key) end
+	local pack = dict[code] or dict[Localization.Default]
+	if pack and pack[key] ~= nil then return pack[key] end
+	if dict[Localization.Default] and dict[Localization.Default][key] ~= nil then
+		return dict[Localization.Default][key]
+	end
+	return tostring(key)
+end
+
+function Localization.Available()
+	local out = {}
+	if dict then for k in pairs(dict) do table.insert(out, k) end end
+	table.sort(out)
+	return out
+end
+
+return Localization
+]=]
+local SH_RPC = [=[
+-- ============================================================
+-- EGG RAID · Shared/RPC (ModuleScript → ReplicatedStorage/Shared/RPC)
+-- CENTRAL remote channel for all future systems.
+-- One RemoteEvent ("RA_RPC") + action routing + middleware:
+--   rate limit, argument type checks, permission checks.
+-- Server registers handlers; client calls them. Server always decides.
+-- No Heartbeat loops; single OnServerEvent connection.
+-- ============================================================
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local IS_SERVER = RunService:IsServer()
+
+local Constants = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Constants"))
+
+local RPC = {}
+local REMOTE_NAME = Constants.RemoteNames.RPC
+local handlers = {}   -- [action] = { args = {...}, perm = fn?, run = fn }
+local typeOk = { string = "string", number = "number", boolean = "boolean", table = "table" }
+
+local function getRemote(createIfMissing)
+	local f = ReplicatedStorage:FindFirstChild("Remotes")
+	local r = f and f:FindFirstChild(REMOTE_NAME)
+	if not r and createIfMissing then
+		if not f then
+			f = Instance.new("Folder"); f.Name = "Remotes"; f.Parent = ReplicatedStorage
+		end
+		r = Instance.new("RemoteEvent"); r.Name = REMOTE_NAME; r.Parent = f
+	end
+	return r
+end
+
+-- ================= SERVER =================
+if IS_SERVER then
+	local AntiCheat = require(game:GetService("ServerScriptService"):WaitForChild("Systems"):WaitForChild("AntiCheat"))
+
+	function RPC.Register(action, def)
+		assert(type(action) == "string" and not handlers[action], "RPC action exists: " .. tostring(action))
+		handlers[action] = {
+			args = def.args or {},         -- ordered list of expected types ("nil" = optional)
+			perm = def.perm,                 -- fn(plr) -> bool  (e.g. Admin check)
+			run  = assert(def.run, "RPC needs run"),
+		}
+	end
+
+	local function checkArgs(spec, args)
+		for i, want in ipairs(spec) do
+			local got = args[i]
+			if want ~= "nil" then
+				if got == nil then return false end
+				if typeOk[want] and type(got) ~= want then return false end
+			end
+		end
+		return true
+	end
+
+	function RPC.Init()
+		local remote = getRemote(true)
+		remote.OnServerEvent:Connect(function(plr, action, args)
+			if type(action) ~= "string" or type(args) ~= "table" then return end
+			local h = handlers[action]
+			if not h then return end                      -- unknown action: ignore
+			if not AntiCheat.RateCheck(plr.UserId) then return end -- spam drop (silent)
+			if h.perm and not h.perm(plr) then return end -- permission denied (silent)
+			if #args > 12 or not checkArgs(h.args, args) then return end
+			local ok, err = pcall(h.run, plr, table.unpack(args, 1, #args))
+			if not ok then warn("[RPC] " .. action .. ": " .. tostring(err)) end
+		end)
+	end
+end
+
+-- ================= CLIENT =================
+function RPC.Call(action, ...)
+	if IS_SERVER then return end
+	local remote = getRemote(false) or ReplicatedStorage:WaitForChild("Remotes", 15):WaitForChild(REMOTE_NAME, 15)
+	if remote then remote:FireServer(action, table.pack(...)) end
+end
+
+-- Server → client push (notifications etc. use their own remotes via Remotes registry)
+function RPC.GetRemote() return getRemote(not IS_SERVER and false or IS_SERVER) end
+
+return RPC
+]=]
+local SY_PDATA = [=[
+-- ============================================================
+-- EGG RAID · Systems/PlayerData (ModuleScript → ServerScriptService/Systems/PlayerData)
+-- Session cache + load/save of the MODULAR profile (EGGRAID_ key).
+-- Saves go through the queued DataStore layer — never per-change.
+-- Server-authoritative: clients can never write profiles.
+-- ============================================================
+local Players = game:GetService("Players")
 
 local PlayerData = {}
-local store = DataStoreService:GetDataStore("EGGRAID_Profiles_v1")
+local DataStore, Constants
 local session = {}
 
 local function defaultProfile()
 	return {
 		money = 0,
-		eggs = {},        -- stored eggs {pet, weight, readyAt}
-		pets = {},        -- pet entries "id@weight" / "BIGid@weight"
+		eggs = {},
+		pets = {},
 		baseLvl = 1,
-		quests = {},      -- [questId] = progress
-		lastDaily = 0,
-		stats = { steals = 0, hatches = 0, sells = 0 },
+		quests = {},
+		daily = { lastClaim = 0, streak = 0 },
+		upgrades = {},
+		settings = {},
+		stats = { steals = 0, hatches = 0, sells = 0, playSeconds = 0 },
 	}
+end
+
+-- late binding so require order stays simple
+local function deps()
+	if not DataStore then
+		local ss = game:GetService("ServerScriptService"):WaitForChild("Systems")
+		DataStore = require(ss:WaitForChild("DataStore"))
+		local rs = game:GetService("ReplicatedStorage")
+		Constants = require(rs:WaitForChild("Shared"):WaitForChild("Constants"))
+	end
 end
 
 function PlayerData.Get(plr)
 	local uid = plr.UserId
-	if session[uid] then return session[uid] end
-	local ok, got = pcall(function() return store:GetAsync("u_" .. uid) end)
+	local s = session[uid]
+	if s then return s.profile end
+	deps()
+	local loaded = nil
+	local ok, data = pcall(DataStore.Load, uid)
+	if ok and type(data) == "table" then loaded = data end
 	local d = defaultProfile()
-	if ok and type(got) == "table" then
-		for k, v in pairs(got) do d[k] = v end
+	if loaded then
+		for _, field in ipairs(Constants.ProfileFields) do
+			if loaded[field] ~= nil then d[field] = loaded[field] end
+		end
 	end
-	d.stats = d.stats or defaultProfile().stats
-	session[uid] = d
+	session[uid] = { profile = d, joinedAt = os.time() }
 	return d
 end
 
-function PlayerData.Save(plr)
-	local d = session[plr.UserId]
-	if not d then return end
-	pcall(function() store:SetAsync("u_" .. plr.UserId, d) end)
+function PlayerData.MarkDirty(plr)
+	local s = session[plr.UserId]
+	if not s then return end
+	deps()
+	DataStore.QueueSave(plr.UserId, function()
+		-- playtime folded in at save time
+		s.profile.stats = s.profile.stats or {}
+		s.profile.stats.playSeconds = (s.profile.stats.playSeconds or 0) + math.floor(os.time() - s.joinedAt)
+		s.joinedAt = os.time()
+		return s.profile
+	end)
+end
+
+function PlayerData.SaveNow(plr)
+	local s = session[plr.UserId]
+	if not s then return end
+	deps()
+	s.profile.stats = s.profile.stats or {}
+	s.profile.stats.playSeconds = (s.profile.stats.playSeconds or 0) + math.floor(os.time() - s.joinedAt)
+	s.joinedAt = os.time()
+	DataStore.SaveNow(plr.UserId, function() return s.profile end)
 end
 
 function PlayerData.Release(plr)
-	PlayerData.Save(plr)
+	PlayerData.SaveNow(plr)
 	session[plr.UserId] = nil
 end
 
 Players.PlayerRemoving:Connect(PlayerData.Release)
-game:BindToClose(function()
-	for _, p in ipairs(Players:GetPlayers()) do PlayerData.Save(p) end
-end)
 
 return PlayerData
 ]=]
-local SYS_ECONOMY = [=[
+local SY_DSTORE = [=[
+-- ============================================================
+-- EGG RAID · Systems/DataStore (ModuleScript → ServerScriptService/Systems/DataStore)
+-- SAFE player-data persistence layer. Queue + throttle; NEVER
+-- saves on every value change. Debounced flush, BindToClose final
+-- flush. No permanent loops (delay chain only while queue dirty).
+-- ============================================================
+local DataStoreService = game:GetService("DataStoreService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Constants = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Constants"))
+
+local DataStore = {}
+local store = DataStoreService:GetDataStore(Constants.DataStores.Profiles)
+
+local FLUSH_INTERVAL = 10      -- seconds between queued saves
+local RETRIES = 3
+local dirty = {}               -- [key] = writerFn (returns table to save)
+local flushing = false
+
+local function keyOf(userId) return "u_" .. userId end
+
+function DataStore.Load(userId)
+	local lastErr
+	for attempt = 1, RETRIES do
+		local ok, data = pcall(function() return store:GetAsync(keyOf(userId)) end)
+		if ok then return data end
+		lastErr = data
+		task.wait(1 + attempt)
+	end
+	error("DataStore.Load failed: " .. tostring(lastErr))
+end
+
+-- Queue a save; writerFn must return the full profile table.
+function DataStore.QueueSave(userId, writerFn)
+	dirty[keyOf(userId)] = writerFn
+	if not flushing then
+		flushing = true
+		task.delay(FLUSH_INTERVAL, DataStore._flush)
+	end
+end
+
+function DataStore.SaveNow(userId, writerFn)
+	local ok, err = pcall(function() store:SetAsync(keyOf(userId), writerFn()) end)
+	if not ok then warn("[DataStore] save fail " .. userId .. ": " .. tostring(err)) end
+	return ok
+end
+
+function DataStore._flush()
+	local hadMore = false
+	for key, writerFn in pairs(dirty) do
+		local ok, err = pcall(function() store:SetAsync(key, writerFn()) end)
+		if ok then dirty[key] = nil else hadMore = true end
+	end
+	if hadMore or next(dirty) then
+		task.delay(FLUSH_INTERVAL, DataStore._flush) -- retry chain, self-terminates
+	else
+		flushing = false
+	end
+end
+
+game:BindToClose(function()
+	for key, writerFn in pairs(dirty) do
+		pcall(function() store:SetAsync(key, writerFn()) end)
+		dirty[key] = nil
+	end
+	flushing = false
+end)
+
+return DataStore
+]=]
+local SY_ECON = [=[
 -- ============================================================
 -- EGG RAID · Systems/Economy (ModuleScript → ServerScriptService/Systems)
 -- All money math for modular systems. Clamped, logged, server-only.
@@ -2538,7 +2879,7 @@ end
 
 return Economy
 ]=]
-local SYS_EGGS = [=[
+local SY_EGGS = [=[
 -- ============================================================
 -- EGG RAID · Systems/Eggs (ModuleScript → ServerScriptService/Systems)
 -- Server-side egg validation helpers for the future egg remotes.
@@ -2593,7 +2934,7 @@ end
 
 return Eggs
 ]=]
-local SYS_BASES = [=[
+local SY_BASES = [=[
 -- ============================================================
 -- EGG RAID · Systems/Bases (ModuleScript → ServerScriptService/Systems)
 -- Base (home plot) ownership + level data on modular profiles.
@@ -2625,7 +2966,7 @@ end
 
 return Bases
 ]=]
-local SYS_PETS = [=[
+local SY_PETS = [=[
 -- ============================================================
 -- EGG RAID · Systems/Pets (ModuleScript → ServerScriptService/Systems)
 -- Pet inventory ops on modular profiles. Entry format "id@weight".
@@ -2678,7 +3019,7 @@ end
 
 return Pets
 ]=]
-local SYS_ZONES = [=[
+local SY_ZONES = [=[
 -- ============================================================
 -- EGG RAID · Systems/Zones (ModuleScript → ServerScriptService/Systems)
 -- Circular island zones from GameConfig. Pure server math.
@@ -2707,7 +3048,7 @@ end
 
 return Zones
 ]=]
-local SYS_QUESTS = [=[
+local SY_QUESTS = [=[
 -- ============================================================
 -- EGG RAID · Systems/Quests (ModuleScript → ServerScriptService/Systems)
 -- Quest definitions + progress API on modular profiles.
@@ -2747,7 +3088,7 @@ end
 
 return Quests
 ]=]
-local SYS_REWARDS = [=[
+local SY_REWARDS = [=[
 -- ============================================================
 -- EGG RAID · Systems/Rewards (ModuleScript → ServerScriptService/Systems)
 -- Daily reward claim — server-timestamped, 20h cooldown.
@@ -2773,7 +3114,7 @@ end
 
 return Rewards
 ]=]
-local SYS_LEADER = [=[
+local SY_LEADER = [=[
 -- ============================================================
 -- EGG RAID · Systems/Leaderboards (ModuleScript → ServerScriptService/Systems)
 -- Session leaderboards from player Attributes (set by live systems).
@@ -2812,7 +3153,7 @@ end
 
 return Leaderboards
 ]=]
-local SYS_GP = [=[
+local SY_GP = [=[
 -- ============================================================
 -- EGG RAID · Systems/Gamepasses (ModuleScript → ServerScriptService/Systems)
 -- OFFICIAL Roblox gamepass integration. SERVER-AUTHORITATIVE.
@@ -2824,7 +3165,6 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GamepassConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("GamepassConfig"))
-local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
 
 local Gamepasses = {}
 local cache = {} -- [userId][key] = bool
@@ -2849,10 +3189,12 @@ local function onPrompt(plr, key)
 end
 
 function Gamepasses.Init()
-	local r = Remotes.Event(Remotes.Names.RequestPromptGP, true)
-	r.OnServerEvent:Connect(function(plr, key)
-		if type(key) == "string" then onPrompt(plr, key) end
-	end)
+	-- routed via the CENTRAL RPC channel (no dedicated remote)
+	local RPC = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RPC"))
+	RPC.Register("PromptGamepass", {
+		args = { "string" },
+		run = function(plr, key) onPrompt(plr, key) end,
+	})
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, id, purchased)
 		if purchased then
 			for _, g in ipairs(GamepassConfig.Catalog) do
@@ -2869,7 +3211,7 @@ Players.PlayerRemoving:Connect(function(plr) cache[plr.UserId] = nil end)
 
 return Gamepasses
 ]=]
-local SYS_ADMIN = [=[
+local SY_ADMIN = [=[
 -- ============================================================
 -- EGG RAID · Systems/Admin (ModuleScript → ServerScriptService/Systems)
 -- Server-side permission checks. Clients can never grant admin.
@@ -2891,80 +3233,617 @@ end
 
 return Admin
 ]=]
-local SYS_AC = [=[
+local SY_AC = [=[
 -- ============================================================
--- EGG RAID · Systems/AntiCheat (ModuleScript → ServerScriptService/Systems)
--- Server-side remote middleware: per-player rate limiting.
--- Wrap EVERY future gameplay remote handler with Guard().
+-- EGG RAID · Systems/AntiCheat (ModuleScript → ServerScriptService/Systems/AntiCheat)
+-- Server-side validation layer. Interfaces + rate limiting today;
+-- movement detectors hook in later (no permanent loops by design —
+-- detectors run on demand / on remote requests).
 -- ============================================================
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GameConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("GameConfig"))
 
 local AntiCheat = {}
-local buckets = {} -- [userId] = {count, resetAt}
 
-local function rateOK(uid)
+-- Detection categories (future systems feed these)
+AntiCheat.Detections = {
+	SpeedHack      = false, -- future: position sampling vs walkspeed
+	Fly            = false, -- future: airborne duration check
+	NoClip         = false, -- future: collision sanity on teleport requests
+	TeleportAbuse  = false, -- future: max distance per action window
+	RemoteSpam     = true,  -- LIVE: token bucket below
+	FakeRewards    = false, -- future: rewards only granted by server flows
+	FakeItems      = false, -- future: inventory writes server-only
+	DuplicateItems = false, -- future: exact-entry dedupe on write
+	UnauthorizedAdmin = false, -- future: Admin.IsAdmin gate on admin RPCs
+}
+
+AntiCheat.OnFlag = nil -- optional fn(plr, category, detail) set by Main
+
+-- ---------- rate limiting (token bucket, per player) ----------
+local buckets = {} -- [userId] = { count, resetAt }
+
+function AntiCheat.RateCheck(userId, limit)
 	local now = os.clock()
-	local b = buckets[uid]
+	local max = limit or GameConfig.AntiCheat.RemoteRatePerSec
+	local b = buckets[userId]
 	if not b or now >= b.resetAt then
-		buckets[uid] = { count = 1, resetAt = now + 1 }
+		buckets[userId] = { count = 1, resetAt = now + 1 }
 		return true
 	end
 	b.count += 1
-	return b.count <= GameConfig.AntiCheat.RemoteRatePerSec
+	return b.count <= max
 end
 
--- Guard(remote): returns a connect helper that drops abusive callers.
--- Usage:  AntiCheat.Guard(remote):Connect(function(plr, ...) ... end)
+function AntiCheat.Flag(plr, category, detail)
+	if not plr then return end
+	if AntiCheat.OnFlag then
+		pcall(AntiCheat.OnFlag, plr, category, detail or "")
+	end
+end
+
+-- ---------- movement sampling interface (no loops) ----------
+-- Future hooks call Sample(player, position) when the player performs
+-- a server-checked action; we validate distance/time since last sample.
+local lastPos = {} -- [userId] = { pos, t }
+function AntiCheat.Sample(plr, position)
+	if not plr or not position then return true end
+	local rec = lastPos[plr.UserId]
+	local now = os.clock()
+	if rec then
+		local dt = now - rec.t
+		if dt > 0.2 then
+			local maxTravel = (GameConfig.WalkBase * 1.9) * dt + 4 -- 90% margin + lag grace
+			if (position - rec.pos).Magnitude > maxTravel then
+				AntiCheat.Flag(plr, "SpeedHack", "dist=" .. math.floor((position - rec.pos).Magnitude))
+				lastPos[plr.UserId] = { pos = position, t = now }
+				return false
+			end
+		end
+	end
+	lastPos[plr.UserId] = { pos = position, t = now }
+	return true
+end
+
+-- Wrap a RemoteEvent handler with rate limiting (legacy helper kept)
 function AntiCheat.Guard(remote)
 	local wrapper = {}
 	function wrapper:Connect(fn)
 		return remote.OnServerEvent:Connect(function(plr, ...)
-			if not rateOK(plr.UserId) then return end -- silent drop
+			if not AntiCheat.RateCheck(plr.UserId) then return end
 			fn(plr, ...)
 		end)
 	end
 	return wrapper
 end
 
+game:GetService("Players").PlayerRemoving:Connect(function(plr)
+	buckets[plr.UserId] = nil
+	lastPos[plr.UserId] = nil
+end)
+
 return AntiCheat
 ]=]
-local CLIENT = [=[
+local SY_NOTIF = [=[
 -- ============================================================
--- EGG RAID · Client (LocalScript → StarterPlayerScripts)
--- Thin client bootstrap for the modular systems.
---  * May only REQUEST actions via Remotes (server validates).
---  * Never trusts or stores authoritative state.
--- The legacy UI (Gui7) stays live until the UI migration task.
+-- EGG RAID · Systems/Notifications (ModuleScript → ServerScriptService/Systems/Notifications)
+-- Server → client push channel (single RemoteEvent via registry).
+-- Payload: { text = string, kind = "info"|"success"|"warning"|"error", duration = number? }
+-- ============================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+local Constants = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Constants"))
+
+local Notifications = {}
+local remote
+
+local function ensure()
+	if not remote then remote = Remotes.Event(Constants.RemoteNames.Notification, true) end
+	return remote
+end
+
+local function clean(payload)
+	if type(payload) ~= "table" or type(payload.text) ~= "string" then return nil end
+	local kind = payload.kind
+	if kind ~= "info" and kind ~= "success" and kind ~= "warning" and kind ~= "error" then kind = "info" end
+	return { text = payload.text:sub(1, 200), kind = kind, duration = tonumber(payload.duration) or 4 }
+end
+
+function Notifications.Send(plr, payload)
+	local p = clean(payload)
+	if p then ensure():FireClient(plr, p) end
+end
+
+function Notifications.Broadcast(payload)
+	local p = clean(payload)
+	if p then ensure():FireAllClients(p) end
+end
+
+-- Convenience: send translated key (Localization lives on client side;
+-- server sends keys, client translates — keeps language per-player)
+function Notifications.SendKey(plr, key, kind)
+	Notifications.Send(plr, { text = key, kind = kind or "info" })
+end
+
+return Notifications
+]=]
+local SY_SETT = [=[
+-- ============================================================
+-- EGG RAID · Systems/SettingsSvc (ModuleScript → ServerScriptService/Systems/SettingsSvc)
+-- Per-player settings: whitelist + type checks + RPC action.
+-- Persisted inside the modular profile (profile.settings).
 -- ============================================================
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local plr = Players.LocalPlayer
+local RPC = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RPC"))
 
-local shared = ReplicatedStorage:WaitForChild("Shared")
-local Remotes = require(shared:WaitForChild("Remotes"))
-local GamepassConfig = require(shared:WaitForChild("Config"):WaitForChild("GamepassConfig"))
+local SettingsSvc = {}
 
-local Client = {}
+-- Whitelist: key -> allowed lua type + constraint
+SettingsSvc.Schema = {
+	language  = { t = "string",  oneOf = { "en", "th", "es", "pt", "id", "vi", "zh", "ko", "ja" } },
+	music     = { t = "boolean" },
+	sfx       = { t = "boolean" },
+	quality   = { t = "string",  oneOf = { "low", "medium", "high" } },
+	showHints = { t = "boolean" },
+}
 
--- Ask the server to show the OFFICIAL gamepass purchase prompt.
--- This is the ONLY gamepass-related thing a client may do.
+function SettingsSvc.Validate(key, value)
+	local s = SettingsSvc.Schema[key]
+	if not s or type(value) ~= s.t then return false end
+	if s.oneOf then
+		for _, v in ipairs(s.oneOf) do
+			if v == value then return true end
+		end
+		return false
+	end
+	return true
+end
+
+function SettingsSvc.Get(profile, key)
+	if not SettingsSvc.Schema[key] then return nil end
+	profile.settings = profile.settings or {}
+	return profile.settings[key]
+end
+
+function SettingsSvc.Set(profile, key, value)
+	if not SettingsSvc.Validate(key, value) then return false end
+	profile.settings = profile.settings or {}
+	profile.settings[key] = value
+	return true
+end
+
+-- Wire the RPC action once at boot (called from Main)
+function SettingsSvc.Init(getProfile, markDirty)
+	RPC.Register("Settings.Set", {
+		args = { "string", "string" },
+		run = function(plr, key, valueRaw)
+			-- values arrive string-encoded from the client
+			local profile = getProfile(plr)
+			if not profile then return end
+			local s = SettingsSvc.Schema[key]
+			if not s then return end
+			local value
+			if s.t == "boolean" then
+				if valueRaw == "true" then value = true elseif valueRaw == "false" then value = false end
+			elseif s.t == "number" then
+				value = tonumber(valueRaw)
+			else
+				value = valueRaw
+			end
+			if value == nil then return end
+			if SettingsSvc.Set(profile, key, value) then markDirty(plr) end
+		end,
+	})
+	RPC.Register("Settings.Get", {
+		args = {},
+		run = function(plr)
+			_ = getProfile(plr) -- profile auto-loads; client reads its own cache
+		end,
+	})
+end
+
+return SettingsSvc
+]=]
+local SY_EVENTS = [=[
+-- ============================================================
+-- EGG RAID · Systems/EventSystem (ModuleScript → ServerScriptService/Systems/EventSystem)
+-- Scheduled in-game events, computed from os.time() on demand.
+-- NO permanent loops and NO polling: future systems ask
+-- EventSystem.IsActive(name) at the moment they need it.
+-- ============================================================
+local EventSystem = {}
+
+-- Definitions (tunable later via GameConfig)
+EventSystem.Definitions = {
+	doubleMoney = { kind = "double_money", cadenceMin = 60 }, -- 1h window every 6h
+	dailyBonus  = { kind = "daily" },
+}
+
+local DAILY_RESET_HOUR_UTC = 0
+
+-- next start timestamp for a cadence-based event
+local function nextCadenceStart(cadenceMin, now)
+	local period = cadenceMin * 60 * 4 -- active 25% of the cycle
+	local cycle = cadenceMin * 60 * 4
+	local anchor = math.floor(now / (cycle * 4)) * (cycle * 4)
+	return anchor
+end
+
+function EventSystem.IsActive(name, now)
+	now = now or os.time()
+	local def = EventSystem.Definitions[name]
+	if not def then return false end
+	if def.kind == "daily" then
+		local t = os.date("!*t", now)
+		return t.hour >= DAILY_RESET_HOUR_UTC -- daily window open after reset hour
+	end
+	if def.kind == "double_money" then
+		local cycle = def.cadenceMin * 60 * 4 -- 4h cycle: 1h active
+		local phase = now % cycle
+		return phase < def.cadenceMin * 60
+	end
+	return false
+end
+
+-- Seconds until next start (for countdown UI)
+function EventSystem.SecondsUntilStart(name, now)
+	now = now or os.time()
+	local def = EventSystem.Definitions[name]
+	if not def or def.kind ~= "double_money" then return nil end
+	local cycle = def.cadenceMin * 60 * 4
+	local phase = now % cycle
+	if phase < def.cadenceMin * 60 then return 0 end -- active now
+	return cycle - phase
+end
+
+-- Multiplier helper future economy code will call
+function EventSystem.MoneyMultiplier(now)
+	return EventSystem.IsActive("doubleMoney", now) and 2 or 1
+end
+
+return EventSystem
+]=]
+local MAIN = [=[
+-- ============================================================
+-- EGG RAID · Main (Script → ServerScriptService/Main)
+-- Server bootstrap: folder skeleton + system wiring.
+-- The legacy monolith (Script "Script") keeps running the live
+-- game untouched until systems migrate (Task 2+). No loops here.
+-- ============================================================
+local ServerScriptService = game:GetService("ServerScriptService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
+
+local function folderAt(parent, name)
+	local f = parent:FindFirstChild(name)
+	if not f then
+		f = Instance.new("Folder")
+		f.Name = name
+		f.Parent = parent
+	end
+	return f
+end
+
+-- ReplicatedStorage skeleton
+local shared = folderAt(ReplicatedStorage, "Shared")
+folderAt(shared, "Config")
+folderAt(ReplicatedStorage, "Remotes")
+folderAt(ReplicatedStorage, "Assets")
+
+-- Workspace skeleton (folders only — no parts)
+for _, n in ipairs({ "Map", "Bases", "EggAreas", "EggSpawns", "GamepassShop", "Spawn" }) do
+	folderAt(Workspace, n)
+end
+
+-- StarterGui home for the future modular UI
+folderAt(StarterGui, "MainUI")
+
+-- Load systems (single require per module; Lua caches automatically)
+local systemsRoot = ServerScriptService:WaitForChild("Systems")
+local function sys(name) return require(systemsRoot:WaitForChild(name)) end
+
+local RPC          = require(shared:WaitForChild("RPC"))
+local PlayerData   = sys("PlayerData")
+local DataStore    = sys("DataStore")
+local Economy      = sys("Economy")
+local Eggs         = sys("Eggs")
+local Bases        = sys("Bases")
+local Pets         = sys("Pets")
+local Zones        = sys("Zones")
+local Quests       = sys("Quests")
+local Rewards      = sys("Rewards")
+local Leaderboards = sys("Leaderboards")
+local Gamepasses   = sys("Gamepasses")
+local Admin        = sys("Admin")
+local AntiCheat    = sys("AntiCheat")
+local Notifications = sys("Notifications")
+local SettingsSvc  = sys("SettingsSvc")
+local EventSystem  = sys("EventSystem")
+
+-- Wire central RPC channel (creates RA_RPC once, single connection)
+RPC.Init()
+
+-- Admin actions must pass permission checks (used by future RPCs)
+local function isAdmin(plr) return Admin.IsAdmin(plr) end
+
+-- Settings actions (real wiring; persisted in modular profile)
+SettingsSvc.Init(function(plr) return PlayerData.Get(plr) end, function(plr) PlayerData.MarkDirty(plr) end)
+
+-- Gamepasses official prompt + ownership caching
+Gamepasses.Init()
+
+-- Central registry for future server scripts
+RA_REGISTRY = {
+	PlayerData = PlayerData, DataStore = DataStore, Economy = Economy,
+	Eggs = Eggs, Bases = Bases, Pets = Pets, Zones = Zones,
+	Quests = Quests, Rewards = Rewards, Leaderboards = Leaderboards,
+	Gamepasses = Gamepasses, Admin = Admin, AntiCheat = AntiCheat,
+	Notifications = Notifications, SettingsSvc = SettingsSvc,
+	EventSystem = EventSystem, RPC = RPC, isAdmin = isAdmin,
+}
+
+print("EGG RAID ARCHITECTURE READY · " .. "17 systems wired")
+]=]
+local CL_MAIN = [=[
+-- ============================================================
+-- EGG RAID · Client (LocalScript → StarterPlayerScripts/Client)
+-- Client bootstrap. Controllers live in StarterPlayerScripts/
+-- Controllers. The client only ever REQUESTS; the server decides.
+-- The legacy UI (LocalScript) and intro (Intro) keep running —
+-- nothing here duplicates them.
+-- ============================================================
+local Controllers = require(script.Parent:WaitForChild("Controllers"):WaitForChild("Init"))
+
+Controllers.InitAll()
+
+local Client = {
+	Controllers = Controllers,
+	Player = game:GetService("Players").LocalPlayer,
+}
+
+-- Request helpers (all go through the central RPC channel)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RPC = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RPC"))
+Client.Request = RPC.Call
+
+local GPConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("GamepassConfig"))
 function Client.PromptGamepass(key)
-	if not GamepassConfig.Get(key) then return end
-	local r = Remotes.Event(Remotes.Names.RequestPromptGP, false)
-	if r then r:FireServer(key) end
+	if not GPConfig.Get(key) then return end
+	RPC.Call("PromptGamepass", key)
 end
 
--- Generic request helper for future systems (server-validated)
-function Client.Request(name, ...)
-	local r = Remotes.Event(name, false)
-	if r then r:FireServer(...) end
-end
-
-Client.Player = plr
-_G.EGGRAID_CLIENT = Client -- temporary handle for the future UI layer
-
+_G.EGGRAID_CLIENT = Client
 print("EGG RAID CLIENT READY")
+]=]
+local CL_CTRLIDX = [=[
+-- ============================================================
+-- EGG RAID · Controllers index (ModuleScript → StarterPlayerScripts/Controllers)
+-- Requires + initializes all client controllers once. Each
+-- controller owns one responsibility and cleans up in Destroy().
+-- ============================================================
+local Controllers = {}
+local loaded = {}
+
+local NAMES = { "Notifications", "Settings", "Camera", "Intro" }
+
+function Controllers.Require(name)
+	local c = loaded[name]
+	if not c then
+		c = require(script.Parent:WaitForChild(name))
+		loaded[name] = c
+	end
+	return c
+end
+
+function Controllers.InitAll()
+	for _, n in ipairs(NAMES) do
+		local c = Controllers.Require(n)
+		if c.Enabled then
+			local ok, err = pcall(c.Init)
+			if not ok then warn("[Controllers] " .. n .. " init failed: " .. tostring(err)) end
+		end
+	end
+end
+
+function Controllers.DestroyAll()
+	for _, c in pairs(loaded) do
+		if c.Destroy then pcall(c.Destroy) end
+	end
+	table.clear(loaded)
+end
+
+return Controllers
+]=]
+local CL_NOTIF = [=[
+-- ============================================================
+-- EGG RAID · Controllers/Notifications (ModuleScript → StarterPlayerScripts/Controllers)
+-- Receives server push notifications into a ring buffer.
+-- Rendering hooks in with the future UI task (legacy Gui7 toasts
+-- stay live until then — no duplicate UI created here).
+-- ============================================================
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Notifications = { Name = "Notifications", Enabled = true }
+
+local MAX_KEEP = 20
+local buffer = {}
+local listeners = {}
+
+local function push(payload)
+	table.insert(buffer, payload)
+	if #buffer > MAX_KEEP then table.remove(buffer, 1) end
+	for _, fn in ipairs(listeners) do
+		pcall(fn, payload)
+	end
+end
+
+function Notifications.Init()
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
+	local remote = remotes:WaitForChild("RA_Notif", 30)
+	if remote then
+		remote.OnClientEvent:Connect(function(payload)
+			if type(payload) == "table" and type(payload.text) == "string" then
+				push(payload)
+			end
+		end)
+	end
+end
+
+function Notifications.GetRecent(n)
+	local out = {}
+	local from = math.max(1, #buffer - (n or MAX_KEEP) + 1)
+	for i = from, #buffer do table.insert(out, buffer[i]) end
+	return out
+end
+
+-- Future UI registers a renderer here (keeps this controller UI-free)
+function Notifications.OnNotification(fn)
+	table.insert(listeners, fn)
+end
+
+function Notifications.Destroy()
+	table.clear(buffer)
+	table.clear(listeners)
+end
+
+return Notifications
+]=]
+local CL_SETT = [=[
+-- ============================================================
+-- EGG RAID · Controllers/Settings (ModuleScript → StarterPlayerScripts/Controllers)
+-- Client-side settings cache. Writes go through the central RPC;
+-- the server validates + persists. Values travel string-encoded.
+-- ============================================================
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Settings = { Name = "Settings", Enabled = true }
+local cache = {
+	language = "en",
+	music = true,
+	sfx = true,
+	quality = "medium",
+	showHints = true,
+}
+local listeners = {}
+
+local function getRPC()
+	return require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RPC"))
+end
+
+function Settings.Get(key) return cache[key] end
+
+function Settings.SetLocal(key, value) -- immediate optimistic update
+	cache[key] = value
+	for _, fn in ipairs(listeners) do pcall(fn, key, value) end
+end
+
+-- Send to server (server rejects invalid keys/values silently)
+function Settings.Set(key, value)
+	Settings.SetLocal(key, value)
+	getRPC().Call("Settings.Set", key, tostring(value))
+end
+
+function Settings.OnChanged(fn) table.insert(listeners, fn) end
+
+function Settings.Init()
+	-- restore persisted settings from server on demand (no polling)
+	getRPC().Call("Settings.Get")
+end
+
+function Settings.Destroy() table.clear(listeners) end
+
+return Settings
+]=]
+local CL_CAM = [=[
+-- ============================================================
+-- EGG RAID · Controllers/Camera (ModuleScript → StarterPlayerScripts/Controllers)
+-- Interface for cinematic camera control (intro, cutscenes,
+-- island unlocks). The legacy Intro5 still owns the live intro;
+-- this controller activates only when Enabled is flipped by the
+-- future migration. No RenderStepped loops: all motion is
+-- TweenService-driven and event-triggered.
+-- ============================================================
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local Camera = { Name = "Camera", Enabled = false }
+
+local MODES = { Follow = Enum.CameraType.Custom, Scripted = Enum.CameraType.Scriptable }
+local activeTween = nil
+
+function Camera.Mode(modeName)
+	local cam = Workspace.CurrentCamera
+	if not cam or not MODES[modeName] then return end
+	cam.CameraType = MODES[modeName]
+end
+
+function Camera.TweenTo(cframe, seconds, onComplete)
+	local cam = Workspace.CurrentCamera
+	if not cam then return end
+	Camera.Mode("Scripted")
+	if activeTween then activeTween:Cancel() end
+	activeTween = TweenService:Create(cam, TweenInfo.new(seconds or 2, Enum.EasingStyle.Sine), { CFrame = cframe })
+	if onComplete then
+		activeTween.Completed:Once(function() onComplete() end)
+	end
+	activeTween:Play()
+end
+
+function Camera.FadeToPlayer()
+	Camera.Mode("Follow")
+	local plr = game:GetService("Players").LocalPlayer
+	local char = plr.Character
+	if char and char:FindFirstChild("Humanoid") then
+		Workspace.CurrentCamera.CameraSubject = char.Humanoid
+	end
+	activeTween = nil
+end
+
+function Camera.Destroy()
+	if activeTween then activeTween:Cancel() end
+	Camera.FadeToPlayer()
+end
+
+return Camera
+]=]
+local CL_INTRO = [=[
+-- ============================================================
+-- EGG RAID · Controllers/Intro (ModuleScript → StarterPlayerScripts/Controllers)
+-- Intro cinematic STATE MACHINE skeleton for the future remake.
+-- Legacy Intro5 remains the live implementation; this controller
+-- is passive (Enabled = false) and only defines the contract:
+-- join → fade → sea/boat cinematic → cartoon attack → island
+-- sweep → wake → banner → control returned. No violence visuals.
+-- ============================================================
+local Intro = { Name = "Intro", Enabled = false }
+
+Intro.States = {
+	None = 0, FadeIn = 1, BoatCinematic = 2, Attack = 3,
+	Fall = 4, IslandSweep = 5, Wake = 6, Banner = 7, Done = 8,
+}
+
+Intro.state = Intro.States.None
+local listeners = {}
+
+-- Future server flow drives transitions; client never self-advances
+function Intro.SetState(nextState)
+	if type(nextState) ~= "number" then return end
+	Intro.state = nextState
+	for _, fn in ipairs(listeners) do pcall(fn, nextState) end
+end
+
+function Intro.OnStateChanged(fn) table.insert(listeners, fn) end
+
+function Intro.IsPlaying()
+	return Intro.state > Intro.States.None and Intro.state < Intro.States.Done
+end
+
+function Intro.Init() end -- wired by future task; keeps zero footprint now
+function Intro.Destroy() table.clear(listeners) end
+
+return Intro
 ]=]
 local toolbar = plugin:CreateToolbar("EggIsle")
 local btn = toolbar:CreateButton("Load EggIsle", "Install EGG RAID architecture + live game", "")
@@ -2983,42 +3862,55 @@ btn.Click:Connect(function()
 	local rs = game:GetService("ReplicatedStorage")
 	local ss = game:GetService("ServerScriptService")
 	local sp = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts")
-	-- legacy cleanup (v1/v2 leftovers)
+	local sg = game:GetService("StarterGui")
+	local ws = game:GetService("Workspace")
 	for _, nm in ipairs({ "EggCore", "MapBuilder", "AdminGui" }) do
 		local o = ss:FindFirstChild(nm) if o then o:Destroy() end
 	end
 	for _, nm in ipairs({ "EggGui", "AdminGui" }) do
 		local o = sp:FindFirstChild(nm) if o then o:Destroy() end
 	end
-	-- legacy live game (kept until migrated)
 	put(rs, "EggLang", "ModuleScript", LANG)
 	put(ss, "Script", "Script", CORE)
 	put(sp, "LocalScript", "LocalScript", GUI)
 	put(sp, "Intro", "LocalScript", INTRO)
-	-- ===== EGG RAID modular architecture =====
 	local shared = fold(rs, "Shared")
 	local cfg = fold(shared, "Config")
 	fold(rs, "Remotes"); fold(rs, "Assets")
-	put(cfg, "GameConfig", "ModuleScript", GAMECFG)
-	put(cfg, "GamepassConfig", "ModuleScript", GPCFG)
-	put(shared, "Remotes", "ModuleScript", REM)
+	put(cfg, "GameConfig", "ModuleScript", CFG_GAME)
+	put(cfg, "GamepassConfig", "ModuleScript", CFG_GP)
+	put(shared, "Remotes", "ModuleScript", SH_REMOTES)
+	put(shared, "Types", "ModuleScript", SH_TYPES)
+	put(shared, "Constants", "ModuleScript", SH_CONST)
+	put(shared, "Utils", "ModuleScript", SH_UTILS)
+	put(shared, "Localization", "ModuleScript", SH_LOC)
+	put(shared, "RPC", "ModuleScript", SH_RPC)
 	local systems = fold(ss, "Systems")
-	put(systems, "PlayerData", "ModuleScript", SYS_PLAYERDATA)
-	put(systems, "Economy", "ModuleScript", SYS_ECONOMY)
-	put(systems, "Eggs", "ModuleScript", SYS_EGGS)
-	put(systems, "Bases", "ModuleScript", SYS_BASES)
-	put(systems, "Pets", "ModuleScript", SYS_PETS)
-	put(systems, "Zones", "ModuleScript", SYS_ZONES)
-	put(systems, "Quests", "ModuleScript", SYS_QUESTS)
-	put(systems, "Rewards", "ModuleScript", SYS_REWARDS)
-	put(systems, "Leaderboards", "ModuleScript", SYS_LEADER)
-	put(systems, "Gamepasses", "ModuleScript", SYS_GP)
-	put(systems, "Admin", "ModuleScript", SYS_ADMIN)
-	put(systems, "AntiCheat", "ModuleScript", SYS_AC)
+	put(systems, "PlayerData", "ModuleScript", SY_PDATA)
+	put(systems, "DataStore", "ModuleScript", SY_DSTORE)
+	put(systems, "Economy", "ModuleScript", SY_ECON)
+	put(systems, "Eggs", "ModuleScript", SY_EGGS)
+	put(systems, "Bases", "ModuleScript", SY_BASES)
+	put(systems, "Pets", "ModuleScript", SY_PETS)
+	put(systems, "Zones", "ModuleScript", SY_ZONES)
+	put(systems, "Quests", "ModuleScript", SY_QUESTS)
+	put(systems, "Rewards", "ModuleScript", SY_REWARDS)
+	put(systems, "Leaderboards", "ModuleScript", SY_LEADER)
+	put(systems, "Gamepasses", "ModuleScript", SY_GP)
+	put(systems, "Admin", "ModuleScript", SY_ADMIN)
+	put(systems, "AntiCheat", "ModuleScript", SY_AC)
+	put(systems, "Notifications", "ModuleScript", SY_NOTIF)
+	put(systems, "SettingsSvc", "ModuleScript", SY_SETT)
+	put(systems, "EventSystem", "ModuleScript", SY_EVENTS)
 	put(ss, "Main", "Script", MAIN)
-	put(sp, "Client", "LocalScript", CLIENT)
-	local sg = game:GetService("StarterGui"); fold(sg, "MainUI")
-	local ws = game:GetService("Workspace")
+	local ctrls = fold(sp, "Controllers")
+	put(ctrls, "Notifications", "ModuleScript", CL_NOTIF)
+	put(ctrls, "Settings", "ModuleScript", CL_SETT)
+	put(ctrls, "Camera", "ModuleScript", CL_CAM)
+	put(ctrls, "Intro", "ModuleScript", CL_INTRO)
+	put(ctrls, "Init", "ModuleScript", CL_CTRLIDX)
+	put(sp, "Client", "LocalScript", CL_MAIN)
+	fold(sg, "MainUI")
 	for _, n in ipairs({ "Map", "Bases", "EggAreas", "EggSpawns", "GamepassShop", "Spawn" }) do fold(ws, n) end
 	print("EGG RAID ARCHITECTURE + v7 LOADED OK")
 end)
