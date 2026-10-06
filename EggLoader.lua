@@ -1,10 +1,9 @@
--- EGG ISLE v6 LOADER (plugin) — กดปุ่ม Load EggIsle ในแถบเครื่องมือ
+-- EGG ISLE v7 LOADER (plugin) — กดปุ่ม Load EggIsle ในแถบเครื่องมือ
 local CORE = [=[
 -- ============================================================
--- EGG ISLE v6 · GameCore6 (Script → ServerScriptService)
--- Money $ · weight eggs + hold-3s pickup · fuse/trail/chest/sell
--- 8 garden slots + bag · 3 leaderboards · Robux tracking · i18n keys
--- v6: guardians (rarest pet per island) · weight x income · spawn odds · tutorial
+-- EGG ISLE v7 · GameCore7 (Script → ServerScriptService)
+-- v7: rarity Mythic/Secret/Divine/??? + Trash · ทุกเกาะมีทุกระดับ
+-- ฟักไข่แบบวางรอเวลา (สูงสุด 2 วัน) · โมเดลสัตว์ 3D ทุกตัว · ดัชนีเงา
 -- ============================================================
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
@@ -15,12 +14,12 @@ local Http = game:GetService("HttpService")
 local MPS = game:GetService("MarketplaceService")
 local WS = game:GetService("Workspace")
 
-local store = DataStoreService:GetDataStore("EggIsleV6")
+local store = DataStoreService:GetDataStore("EggIsleV7")
 
 local function killOld(name) local o = script.Parent:FindFirstChild(name) if o then o:Destroy() end end
 killOld("MapBuilder")
 
--- ---------- pets (canonical rarity ids) ----------
+-- ---------- สัตว์ 22 ชนิด (isl="all" = โผล่ทุกเกาะ) ----------
 local PETS = {
 	{ id = "cat", rarity = "common", power = 1, isl = 2 },
 	{ id = "dog", rarity = "common", power = 1, isl = 2 },
@@ -33,27 +32,46 @@ local PETS = {
 	{ id = "uni", rarity = "epic", power = 40, isl = 4 },
 	{ id = "gld", rarity = "legendary", power = 200, isl = 5 },
 	{ id = "phx", rarity = "legendary", power = 200, isl = 5 },
+	{ id = "bull", rarity = "mythic", power = 1000, isl = 2 },
+	{ id = "scor", rarity = "mythic", power = 1000, isl = 3 },
+	{ id = "bear", rarity = "mythic", power = 1000, isl = 4 },
+	{ id = "bat", rarity = "mythic", power = 1000, isl = 5 },
+	{ id = "sheep", rarity = "secret", power = 5000, isl = 2 },
+	{ id = "sphinx", rarity = "secret", power = 5000, isl = 3 },
+	{ id = "wraith", rarity = "secret", power = 5000, isl = 4 },
+	{ id = "shd", rarity = "secret", power = 5000, isl = 5 },
+	{ id = "seraph", rarity = "divine", power = 25000, isl = "all" },
+	{ id = "void", rarity = "mystery", power = 100000, isl = "all" },
+	{ id = "sloth", rarity = "trash", power = 1000, isl = "all" },
 }
-local WEIGHT = { common = 10, uncommon = 20, rare = 40, epic = 80, legendary = 150 }
-local SELL_VALUE = { common = 50, uncommon = 150, rare = 500, epic = 2000, legendary = 10000 }
+local WEIGHT = { common = 10, uncommon = 20, rare = 40, epic = 80, legendary = 150, mythic = 300, secret = 600, divine = 1200, mystery = 2500, trash = 0.01 }
+local SELL_VALUE = { common = 50, uncommon = 150, rare = 500, epic = 2000, legendary = 10000, mythic = 50000, secret = 250000, divine = 1000000, mystery = 10000000, trash = 1 }
+-- โอกาสเกิดไข่ (ปรับสมดุลที่นี่) · secret ออกยาก ~2.5x กว่า mythic · ??? แทบไม่โผล่
+local SPAWN_W = { common = 60, uncommon = 30, rare = 16, epic = 7, legendary = 3, mythic = 1.2, secret = 0.45, divine = 0.12, mystery = 0.03, trash = 0.1 }
+-- เวลารอฟักพื้นฐาน (วินาที) x ตัวคูณน้ำหนัก(0.5-2) · เพดาน 2 วัน
+local WAIT_BASE = { common = 10, uncommon = 30, rare = 120, epic = 600, legendary = 3600, mythic = 21600, secret = 43200, divine = 86400, mystery = 172800, trash = 300 }
+local MAX_WAIT = 172800
 local TRAILS = {
 	{ mult = 1.5, cost = 2500, color = Color3.fromRGB(80, 220, 90) },
 	{ mult = 2, cost = 10000, color = Color3.fromRGB(120, 200, 255) },
 	{ mult = 2.5, cost = 40000, color = Color3.fromRGB(255, 120, 50) },
 }
--- ---------- สมดุล: โอกาสเกิดไข่ต่อระดับ (ปรับได้ที่นี่) ----------
-local SPAWN_W = { common = 60, uncommon = 30, rare = 16, epic = 7, legendary = 3 }
--- สัตว์หายากกว่า = เงินเยอะกว่า (power) · น้ำหนักไข่คูณเงินอีก 0.8x-1.6x · ยักษ์ x2
+local RANK = { common = 1, uncommon = 2, rare = 3, epic = 4, legendary = 5, mythic = 6, secret = 7, divine = 8, mystery = 9, trash = 0 }
+local SINGLE = { divine = true, mystery = true } -- ถือได้ตัวเดียว
 local PET_COLOR = {
 	cat = Color3.fromRGB(255, 150, 60), dog = Color3.fromRGB(220, 180, 120), rab = Color3.fromRGB(250, 250, 250),
 	pan = Color3.fromRGB(60, 60, 65), cap = Color3.fromRGB(150, 105, 70), ele = Color3.fromRGB(255, 150, 190),
 	lio = Color3.fromRGB(255, 200, 80), dra = Color3.fromRGB(140, 220, 255), uni = Color3.fromRGB(255, 255, 255),
 	gld = Color3.fromRGB(255, 200, 60), phx = Color3.fromRGB(255, 110, 40),
+	bull = Color3.fromRGB(255, 215, 90), scor = Color3.fromRGB(200, 160, 60), bear = Color3.fromRGB(240, 248, 255),
+	bat = Color3.fromRGB(160, 30, 40), sheep = Color3.fromRGB(245, 245, 255), sphinx = Color3.fromRGB(230, 190, 110),
+	wraith = Color3.fromRGB(180, 230, 255), shd = Color3.fromRGB(40, 30, 60), seraph = Color3.fromRGB(255, 250, 220),
+	void = Color3.fromRGB(25, 10, 40), sloth = Color3.fromRGB(140, 120, 90),
 }
 local function petById(id) for _, p in ipairs(PETS) do if p.id == id then return p end end end
 local function poolOf(isl)
 	local t = {}
-	for _, p in ipairs(PETS) do if p.isl == isl then table.insert(t, p) end end
+	for _, p in ipairs(PETS) do if p.isl == isl or p.isl == "all" then table.insert(t, p) end end
 	return t
 end
 local function pickWeighted(pool)
@@ -66,7 +84,6 @@ local function pickWeighted(pool)
 	end
 	return pool[#pool]
 end
--- entry = "id@น้ำหนัก" หรือ "BIGid@น้ำหนัก"
 local function parseEntry(en)
 	local base, big = en, false
 	if base:sub(1, 3) == "BIG" then big = true; base = base:sub(4) end
@@ -93,7 +110,72 @@ local function sellValue(en)
 	return math.floor(SELL_VALUE[p.rarity] * wMult(base, w) * (big and 3 or 1))
 end
 
--- ---------- islands ----------
+-- ---------- โมเดลสัตว์บล็อกกี้ ----------
+local function buildPet(id, scale, pos, heading)
+	scale = scale or 1
+	local col = PET_COLOR[id] or Color3.fromRGB(150, 150, 150)
+	local f = Instance.new("Folder"); f.Name = "Pet_" .. id
+	local function mk(size, off, color, collide)
+		local p = Instance.new("Part"); p.Size = Vector3.new(size[1], size[2], size[3]) * scale
+		p.Color = color or col; p.Anchored = true; p.CanCollide = collide or false
+		p.Material = Enum.Material.SmoothPlastic; p.Parent = f
+		return p
+	end
+	local body, head
+	local biped = (id == "seraph" or id == "void")
+	if biped then
+		body = mk({ 3, 4, 2 }, { 0, 3, 0 })
+		head = mk({ 2, 2, 2 }, { 0, 5.8, 0 })
+		mk({ 1, 3, 1 }, { -2, 3, 0 }); mk({ 1, 3, 1 }, { 2, 3, 0 })
+		mk({ 1.2, 2, 1.2 }, { -1, 0.9, 0 }); mk({ 1.2, 2, 1.2 }, { 1, 0.9, 0 })
+	else
+		body = mk({ 3, 2.4, 4.4 }, { 0, 2.4, 0 })
+		head = mk({ 2, 2, 2 }, { 0, 3.4, 2.8 })
+		mk({ 0.8, 1.6, 0.8 }, { -1.1, 0.8, 1.4 }); mk({ 0.8, 1.6, 0.8 }, { 1.1, 0.8, 1.4 })
+		mk({ 0.8, 1.6, 0.8 }, { -1.1, 0.8, -1.4 }); mk({ 0.8, 1.6, 0.8 }, { 1.1, 0.8, -1.4 })
+	end
+	local function weld(a, b, c0) local w = Instance.new("Weld"); w.Part0 = a; w.Part1 = b; w.C0 = c0 * 1 and CFrame.new(c0.X * scale, c0.Y * scale, c0.Z * scale) or c0; w.Parent = a end
+	local ears = { cat = "point", dog = "flop", rab = "long", pan = "round", cap = "round", ele = "fan", lio = "round", bear = "round", bat = "point", sheep = "round", sloth = "round", bull = "horn", scor = nil, sphinx = "round" }
+	local e = ears[id]
+	if e == "point" then weld(body, mk({ 0.5, 1, 0.3 }, { 0, 0, 0 }), Vector3.new(-0.7, 4.6, 2.8)); weld(body, mk({ 0.5, 1, 0.3 }, { 0, 0, 0 }), Vector3.new(0.7, 4.6, 2.8)) end
+	if e == "long" then weld(body, mk({ 0.5, 2.2, 0.4 }, { 0, 0, 0 }), Vector3.new(-0.6, 5.2, 2.8)); weld(body, mk({ 0.5, 2.2, 0.4 }, { 0, 0, 0 }), Vector3.new(0.6, 5.2, 2.8)) end
+	if e == "flop" then weld(body, mk({ 0.5, 1.2, 0.4 }, { 0, 0, 0 }, col:Lerp(Color3.new(0, 0, 0), 0.25)), Vector3.new(-1.1, 3.6, 2.8)); weld(body, mk({ 0.5, 1.2, 0.4 }, { 0, 0, 0 }, col:Lerp(Color3.new(0, 0, 0), 0.25)), Vector3.new(1.1, 3.6, 2.8)) end
+	if e == "round" then weld(body, mk({ 0.6, 0.6, 0.3 }, { 0, 0, 0 }), Vector3.new(-0.7, 4.5, 2.8)); weld(body, mk({ 0.6, 0.6, 0.3 }, { 0, 0, 0 }), Vector3.new(0.7, 4.5, 2.8)) end
+	if e == "fan" then weld(body, mk({ 1.4, 1.6, 0.3 }, { 0, 0, 0 }), Vector3.new(-1.3, 3.6, 2.6)); weld(body, mk({ 1.4, 1.6, 0.3 }, { 0, 0, 0 }), Vector3.new(1.3, 3.6, 2.6)) end
+	if e == "horn" then weld(body, mk({ 0.4, 1.6, 0.4 }, { 0, 0, 0 }, Color3.fromRGB(240, 240, 230)), Vector3.new(-0.9, 4.6, 2.8)); weld(body, mk({ 0.4, 1.6, 0.4 }, { 0, 0, 0 }, Color3.fromRGB(240, 240, 230)), Vector3.new(0.9, 4.6, 2.8)) end
+	if id == "ele" then weld(body, mk({ 0.7, 2.4, 0.7 }, { 0, 0, 0 }), Vector3.new(0, 2.6, 4)) end
+	if id == "uni" then weld(body, mk({ 0.3, 1.6, 0.3 }, { 0, 0, 0 }, Color3.fromRGB(255, 220, 120)), Vector3.new(0, 5, 2.8)) end
+	if id == "lio" or id == "sphinx" then weld(body, mk({ 2.8, 2.8, 0.6 }, { 0, 0, 0 }, Color3.fromRGB(180, 110, 40)), Vector3.new(0, 3.4, 2)) end
+	if id == "scor" then weld(body, mk({ 0.6, 0.6, 2.4 }, { 0, 0, 0 }), Vector3.new(0, 3.2, -2.8)); weld(body, mk({ 1, 1, 1 }, { 0, 0, 0 }, Color3.fromRGB(120, 40, 40)), Vector3.new(0, 3.8, -4)) end
+	if id == "sloth" then weld(body, mk({ 0.4, 1.4, 0.4 }, { 0, 0, 0 }, Color3.fromRGB(90, 75, 55)), Vector3.new(-1.2, 2.6, 2.6)); weld(body, mk({ 0.4, 1.4, 0.4 }, { 0, 0, 0 }, Color3.fromRGB(90, 75, 55)), Vector3.new(1.2, 2.6, 2.6)) end
+	local wings = { dra = true, gld = true, phx = true, bat = true, sphinx = true, shd = true, seraph = true, void = true, uni = false }
+	if wings[id] then
+		local wc = id == "shd" and Color3.fromRGB(30, 20, 50) or id == "void" and Color3.fromRGB(60, 20, 100) or col:Lerp(Color3.new(1, 1, 1), 0.3)
+		local wy = biped and 4 or 3.4
+		weld(body, mk({ 3.4, 2.2, 0.3 }, { 0, 0, 0 }, wc), Vector3.new(-2.6, wy, -1))
+		weld(body, mk({ 3.4, 2.2, 0.3 }, { 0, 0, 0 }, wc), Vector3.new(2.6, wy, -1))
+	end
+	if id == "seraph" then weld(body, mk({ 1.6, 0.3, 1.6 }, { 0, 0, 0 }, Color3.fromRGB(255, 240, 150)), Vector3.new(0, 7.2, 0)) end
+	if id == "void" then
+		local li = Instance.new("PointLight"); li.Color = Color3.fromRGB(160, 60, 255); li.Range = 20; li.Brightness = 2; li.Parent = head
+	end
+	if RANK[petById(id).rarity] >= 6 then
+		local li = Instance.new("PointLight"); li.Color = col; li.Range = 18; li.Brightness = 1.5; li.Parent = body
+	end
+	-- ตา
+	local eyeC = Color3.fromRGB(20, 20, 25)
+	if biped then
+		weld(body, mk({ 0.3, 0.3, 0.1 }, { 0, 0, 0 }, eyeC), Vector3.new(-0.5, 6, 1)); weld(body, mk({ 0.3, 0.3, 0.1 }, { 0, 0, 0 }, eyeC), Vector3.new(0.5, 6, 1))
+	else
+		weld(body, mk({ 0.3, 0.3, 0.1 }, { 0, 0, 0 }, eyeC), Vector3.new(-0.5, 3.6, 3.8)); weld(body, mk({ 0.3, 0.3, 0.1 }, { 0, 0, 0 }, eyeC), Vector3.new(0.5, 3.6, 3.8))
+	end
+	f.Parent = WS:FindFirstChild("World3") or WS
+	local root0 = body
+	root0.CFrame = CFrame.new(pos) * CFrame.Angles(0, heading or 0, 0)
+	return f, root0
+end
+
+-- ---------- เกาะ ----------
 local ISLANDS = {
 	{ n = 1, pos = Vector3.new(0, 0, 0), r = 90, grass = Color3.fromRGB(95, 190, 60), label = "Start Island", rec = 0 },
 	{ n = 2, pos = Vector3.new(500, 0, 0), r = 120, grass = Color3.fromRGB(110, 200, 70), label = "Grass Isle", rec = 24 },
@@ -101,18 +183,18 @@ local ISLANDS = {
 	{ n = 4, pos = Vector3.new(300, 0, -700), r = 140, grass = Color3.fromRGB(200, 230, 245), label = "Ice Isle", rec = 54 },
 	{ n = 5, pos = Vector3.new(-400, 0, -1100), r = 150, grass = Color3.fromRGB(110, 85, 150), label = "Shadow Isle", rec = 81 },
 }
-local EGG_COUNT = { [2] = 6, [3] = 5, [4] = 4, [5] = 3 }
+local EGG_COUNT = { [2] = 8, [3] = 7, [4] = 6, [5] = 5 }
 
--- ---------- remotes ----------
+-- ---------- รีโมต ----------
 local function ev(name) local r = Instance.new("RemoteEvent"); r.Name = name; r.Parent = ReplicatedStorage; return r end
-local evNote = ev("Note")     -- (kind, key, a, b, c)
+local evNote = ev("Note")
 local evPhase = ev("Phase")
 local evBoatIn = ev("BoatIn")
 local evAct = ev("Act")
 local evPick = ev("Pick")
 local evIntro = ev("IntroDone")
 
--- ---------- state ----------
+-- ---------- สถานะ ----------
 local DATA = {}
 local gardens = {}
 local carrying = {}
@@ -120,6 +202,7 @@ local boatOf = {}
 
 local BOAT_COST = { [2] = 1000, [3] = 5000, [4] = 25000, [5] = 100000 }
 local GARDEN_COST = { [2] = 500, [3] = 2500, [4] = 10000, [5] = 50000, [6] = 200000 }
+local GPOS = { Vector3.new(-30, 0, -20), Vector3.new(0, 0, -20), Vector3.new(30, 0, -20), Vector3.new(-30, 0, -48), Vector3.new(0, 0, -48), Vector3.new(30, 0, -48) }
 local function boatSpeed(lvl) return 16 * math.pow(1.5, lvl - 1) end
 local function slotsOf(d) return 8 + (d.gardenLvl - 1) * 4 end
 local function carrySpeed(w) return math.clamp(16 - w * 0.06, 6, 16) end
@@ -140,6 +223,45 @@ local function applyWalk(plr)
 	hum.WalkSpeed = 16 * mult
 end
 
+local function topActive(d)
+	local list = {}
+	for _, en in ipairs(d.pets) do table.insert(list, { en = en, pw = entryPower(en) }) end
+	table.sort(list, function(a, b) return a.pw > b.pw end)
+	local out = {}
+	for i = 1, math.min(slotsOf(d), #list) do table.insert(out, list[i].en) end
+	return out
+end
+
+-- แสดงโมเดลสัตว์ที่สวน + ไข่ที่กำลังฟัก
+local function refreshGardenVis(plr)
+	local d = DATA[plr.UserId] if not d then return end
+	local rt = WS:FindFirstChild("World3") if not rt then return end
+	local old = rt:FindFirstChild("Vis" .. plr.UserId)
+	if old then old:Destroy() end
+	local holder = Instance.new("Folder"); holder.Name = "Vis" .. plr.UserId; holder.Parent = rt
+	local gp = GPOS[d.slot] + Vector3.new(0, 7, 0)
+	local act = topActive(d)
+	for i, en in ipairs(act) do
+		local base = parseEntry(en)
+		local a = (i / math.max(1, #act)) * math.pi * 2
+		local m = buildPet(base, 0.8, gp + Vector3.new(math.cos(a) * 5, 0, math.sin(a) * 5), a + math.pi / 2)
+		m.Parent = holder
+	end
+	for i, inc in ipairs(d.incub or {}) do
+		if i <= 8 then
+			local p = petById(inc.p)
+			local e = Instance.new("Part"); e.Shape = Enum.PartType.Ball; e.Size = Vector3.new(2, 2.6, 2)
+			e.Color = EGG_COLOR[p.rarity] or Color3.fromRGB(245, 245, 240)
+			e.Anchored = true; e.CanCollide = false; e.Parent = holder
+			e.Position = gp + Vector3.new(-5 + (i - 1) * 1.6, 1.4, -5)
+			e.Name = (os.time() >= inc.ready) and "IncubReady" or "IncubWait"
+			if os.time() >= inc.ready then
+				local li = Instance.new("PointLight"); li.Color = Color3.fromRGB(255, 255, 150); li.Range = 12; li.Brightness = 2; li.Parent = e
+			end
+		end
+	end
+end
+
 local function syncAttrs(plr)
 	local d = DATA[plr.UserId] if not d then return end
 	plr:SetAttribute("BoatLvl", d.boatLvl)
@@ -153,6 +275,8 @@ local function syncAttrs(plr)
 	for k, v in pairs(d.index) do idx[tostring(k)] = v end
 	plr:SetAttribute("IndexJSON", Http:JSONEncode(idx))
 	plr:SetAttribute("RobuxSpent", d.robuxSpent or 0)
+	plr:SetAttribute("IncubJSON", Http:JSONEncode(d.incub or {}))
+	refreshGardenVis(plr)
 end
 
 local function charConnect(plr)
@@ -163,10 +287,11 @@ Players.PlayerAdded:Connect(function(plr)
 	local ls = Instance.new("Folder"); ls.Name = "leaderstats"; ls.Parent = plr
 	local cash = Instance.new("IntValue"); cash.Name = "Money"; cash.Value = 0; cash.Parent = ls
 
-	local d = { money = 150, pets = {}, boatLvl = 1, gardenLvl = 1, index = {}, intro = false, trail = 0, trailsOwned = {}, lastGift = 0, playSec = 0, robuxSpent = 0, tut = false }
+	local d = { money = 150, pets = {}, boatLvl = 1, gardenLvl = 1, index = {}, intro = false, trail = 0, trailsOwned = {}, lastGift = 0, playSec = 0, robuxSpent = 0, tut = false, incub = {} }
 	local ok, got = pcall(function() return store:GetAsync("u_" .. plr.UserId) end)
 	if ok and type(got) == "table" then for k, v in pairs(got) do d[k] = v end end
 	d.money = d.money or 150
+	d.incub = d.incub or {}
 	cash.Value = d.money
 	DATA[plr.UserId] = d
 
@@ -196,13 +321,13 @@ Players.PlayerRemoving:Connect(function(plr)
 	for i = 1, 6 do if gardens[i] == plr.UserId then gardens[i] = nil end end
 	local c = carrying[plr.UserId]
 	if c then c.model:Destroy() carrying[plr.UserId] = nil end
+	local v = root:FindFirstChild("Vis" .. plr.UserId) if v then v:Destroy() end
 	DATA[plr.UserId] = nil
 end)
 game:BindToClose(function() for _, p in ipairs(Players:GetPlayers()) do save(p) end end)
 
 local function money(plr) local ls = plr:FindFirstChild("leaderstats") return ls and ls.Money end
 
--- ---------- Robux products: track spending + grant money ----------
 MPS.ProcessReceipt = function(receipt)
 	local plr = Players:GetPlayerByUserId(receipt.PlayerId)
 	if plr and DATA[plr.UserId] then
@@ -217,7 +342,7 @@ MPS.ProcessReceipt = function(receipt)
 	return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
--- ---------- garden income + live board attrs ----------
+-- ---------- รายได้สวน ----------
 task.spawn(function()
 	while true do
 		task.wait(1)
@@ -238,7 +363,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- world
+-- โลก
 -- ============================================================
 local old = WS:FindFirstChild("World3") if old then old:Destroy() end
 local md = WS:FindFirstChild("MapDecor") if md then md:Destroy() end
@@ -277,7 +402,6 @@ for _, isl in ipairs(ISLANDS) do
 	cyl(isl.r + 12, 5, isl.pos + Vector3.new(0, 2, 0), Color3.fromRGB(235, 210, 150), Enum.Material.Sand)
 	cyl(isl.r, 7, isl.pos + Vector3.new(0, 3.4, 0), isl.grass, Enum.Material.Grass)
 	spots[isl.n] = {}
-	-- checkered texture tiles on EVERY island (our palette)
 	local cell = 18
 	local n = math.ceil((isl.r - 8) / cell)
 	local dark = Color3.new(isl.grass.R * 0.82, isl.grass.G * 0.82, isl.grass.B * 0.82)
@@ -290,19 +414,14 @@ for _, isl in ipairs(ISLANDS) do
 	if isl.n == 1 then
 		local sp = part(Vector3.new(14, 1, 14), isl.pos + Vector3.new(0, top + 0.4, 20), Color3.fromRGB(255, 220, 120), Enum.Material.Slate)
 		sp.Name = "Spawn3"
-		local gpos = { Vector3.new(-30, 0, -20), Vector3.new(0, 0, -20), Vector3.new(30, 0, -20), Vector3.new(-30, 0, -48), Vector3.new(0, 0, -48), Vector3.new(30, 0, -48) }
-		for i, gp in ipairs(gpos) do
+		for i, gp in ipairs(GPOS) do
 			local base = part(Vector3.new(14, 0.6, 14), isl.pos + gp + Vector3.new(0, top + 0.2, 0), Color3.fromRGB(120, 90, 60), Enum.Material.Wood)
 			base.Name = "Garden" .. i
 			sign3d(base, "Garden " .. i, 120, 40)
-			local inc = part(Vector3.new(3, 4, 3), isl.pos + gp + Vector3.new(5, top + 2.5, -4), Color3.fromRGB(80, 130, 200), Enum.Material.Metal)
-			inc.Name = "Incubator" .. i
-			sign3d(inc, "Incubator", 110, 36)
 		end
 		local chest = part(Vector3.new(4, 3, 3), isl.pos + Vector3.new(20, top + 1.5, 20), Color3.fromRGB(255, 200, 60), Enum.Material.Metal)
 		chest.Name = "GiftChest"
 		sign3d(chest, "Free Chest", 100, 40, Color3.fromRGB(255, 240, 150))
-		-- 3 leaderboard boards
 		local bdefs = { { "BoardA", -26, 8 }, { "BoardB", -26, 26 }, { "BoardC", -26, 44 } }
 		for _, bd in ipairs(bdefs) do
 			local b = part(Vector3.new(12, 14, 1), isl.pos + Vector3.new(bd[2], top + 8, bd[3]), Color3.fromRGB(60, 140, 220), Enum.Material.Metal)
@@ -330,7 +449,7 @@ for _, isl in ipairs(ISLANDS) do
 	end
 end
 
--- ---------- boats ----------
+-- ---------- เรือ ----------
 local boats = {}
 local function buildBoat(i, pos)
 	local hull = part(Vector3.new(8, 2, 14), pos + Vector3.new(0, 1.2, 0), Color3.fromRGB(180, 80, 50), Enum.Material.Wood)
@@ -381,45 +500,38 @@ evBoatIn.OnServerEvent:Connect(function(plr, th, tu)
 	b.turn = math.clamp(tonumber(tu) or 0, -1, 1)
 end)
 
--- ============================================================
--- ผู้พิทักษ์: สัตว์หายากสุดของแต่ละเกาะ ไล่จับคนถือไข่แล้วเอาไข่คืน
--- ============================================================
-local RANK = { common = 1, uncommon = 2, rare = 3, epic = 4, legendary = 5 }
+-- ---------- ผู้พิทักษ์ = Secret ประจำเกาะ ----------
 local GUARD_PET = {}
 for isl = 2, 5 do
 	local best = nil
 	for _, p in ipairs(PETS) do
-		if p.isl == isl and (not best or RANK[p.rarity] > RANK[best.rarity]) then best = p end
+		if p.isl == isl and RANK[p.rarity] >= 2 and RANK[p.rarity] <= 7 and (not best or RANK[p.rarity] > RANK[best.rarity]) then best = p end
 	end
 	GUARD_PET[isl] = best.id
 end
 local guardians = {}
-local function weldTo(a, b, c0)
-	local w = Instance.new("Weld"); w.Part0 = a; w.Part1 = b; w.C0 = c0; w.Parent = a
-end
 local function buildGuardian(isl)
 	local id = GUARD_PET[isl]
-	local col = PET_COLOR[id] or Color3.fromRGB(120, 120, 130)
 	local islD = ISLANDS[isl]
-	local top = 8
-	local g0 = Instance.new("Folder"); g0.Name = "Guardian" .. isl; g0.Parent = root
-	local body = part(Vector3.new(7, 4, 10), islD.pos + Vector3.new(0, top + 4, 0), col, Enum.Material.SmoothPlastic, false)
-	body.Name = "GBody"
-	local head = part(Vector3.new(4.5, 4.5, 4.5), islD.pos + Vector3.new(0, top + 6, 6.5), col, Enum.Material.SmoothPlastic, false)
-	head.Name = "GHead"
-	head:SetAttribute("Pet", id)
-	head:SetAttribute("Isle", isl)
-	weldTo(body, head, CFrame.new(0, 2, 6.5))
-	for _, lp in ipairs({ Vector3.new(-2.5, -2.5, 3.5), Vector3.new(2.5, -2.5, 3.5), Vector3.new(-2.5, -2.5, -3.5), Vector3.new(2.5, -2.5, -3.5) }) do
-		local leg = part(Vector3.new(1.6, 3, 1.6), islD.pos + lp + Vector3.new(0, top + 2, 0), col, Enum.Material.SmoothPlastic, false)
-		weldTo(body, leg, CFrame.new(lp.X, lp.Y, lp.Z))
+	local m, bodyPart = buildPet(id, 2.6, islD.pos + Vector3.new(0, 8, 0), 0)
+	m.Name = "Guardian" .. isl
+	local head = m:FindFirstChildOfClass("Part")
+	for _, p in ipairs(m:GetChildren()) do
+		if p:IsA("Part") then p.Parent = m end
 	end
-	local earL = part(Vector3.new(1, 2, 0.6), islD.pos + Vector3.new(-1.5, top + 8.5, 6.5), col, Enum.Material.SmoothPlastic, false)
-	weldTo(body, earL, CFrame.new(-1.5, 4.5, 6.5))
-	local earR = part(Vector3.new(1, 2, 0.6), islD.pos + Vector3.new(1.5, top + 8.5, 6.5), col, Enum.Material.SmoothPlastic, false)
-	weldTo(body, earR, CFrame.new(1.5, 4.5, 6.5))
-	local li = Instance.new("PointLight"); li.Color = col; li.Range = 28; li.Brightness = 2; li.Parent = body
-	guardians[isl] = { body = body, pos = Vector3.new(0, 0, 0), heading = 0, patrol = nil, cool = 0 }
+	local ghead = nil
+	for _, p in ipairs(m:GetDescendants()) do
+		if p:IsA("Part") and p.Size.Y < 3 then ghead = p break end
+	end
+	if bodyPart then
+		bodyPart.Name = "GBody"
+		bodyPart:SetAttribute("Pet", id)
+		local bb = Instance.new("BillboardGui"); bb.Size = UDim2.new(0, 240, 0, 54); bb.AlwaysOnTop = true; bb.Parent = bodyPart
+		local t = Instance.new("TextLabel"); t.Size = UDim2.new(1, 0, 1, 0); t.BackgroundTransparency = 1
+		t.Font = Enum.Font.FredokaOne; t.TextScaled = true; t.TextColor3 = Color3.fromRGB(255, 90, 90)
+		t.TextStrokeTransparency = 0; t.Name = "GTitle"; t.Parent = bb
+	end
+	guardians[isl] = { model = m, body = bodyPart, pos = Vector3.new(0, 0, 0), heading = 0, patrol = nil, cool = 0 }
 end
 for isl = 2, 5 do buildGuardian(isl) end
 
@@ -431,7 +543,6 @@ task.spawn(function()
 			local islD = ISLANDS[isl]
 			local top = 8
 			g.cool = math.max(0, g.cool - dt)
-			-- หาเหยื่อ: คนที่ถือไข่ของเกาะนี้ อยู่ในเกาะ และผู้พิทักษ์มองเห็น
 			local victimUid, victimHrp, victimW = nil, nil, 0
 			if g.cool <= 0 then
 				for uid, c in pairs(carrying) do
@@ -453,7 +564,7 @@ task.spawn(function()
 			local speed, dest = 9, nil
 			if victimHrp then
 				dest = victimHrp.Position - islD.pos
-				speed = math.min(22, carrySpeed(victimW) + 6) -- ถือไข่หนักยิ่งหนีช้า ผู้พิทักษ์ก็ไล่ทันง่ายขึ้น
+				speed = math.min(22, carrySpeed(victimW) + 6)
 			else
 				if not g.patrol or (Vector3.new(g.pos.X, 0, g.pos.Z) - g.patrol).Magnitude < 5 then
 					local a = math.random() * math.pi * 2
@@ -470,8 +581,9 @@ task.spawn(function()
 				g.pos = g.pos + dir * math.min(speed * dt, L)
 				g.heading = math.atan2(dir.X, dir.Z)
 			end
-			g.body.CFrame = CFrame.new(islD.pos + g.pos + Vector3.new(0, top + 4, 0)) * CFrame.Angles(0, g.heading, 0)
-			-- จับได้: แย่งไข่คืนรัง
+			if g.body then
+				g.body.CFrame = CFrame.new(islD.pos + g.pos + Vector3.new(0, top + 2, 0)) * CFrame.Angles(0, g.heading, 0)
+			end
 			if victimUid and (victimHrp.Position - (islD.pos + g.pos + Vector3.new(0, top, 0))).Magnitude < 6 then
 				local c = carrying[victimUid]
 				if c then
@@ -484,7 +596,7 @@ task.spawn(function()
 						evNote:FireClient(plr, "pop", "guard_hit")
 					end
 					local ss = spots[isl]
-					makeEgg(isl, ss[math.random(1, #ss)], c.pet, c.weight) -- ไข่คืนรัง
+					makeEgg(isl, ss[math.random(1, #ss)], c.pet, c.weight)
 					g.cool = 6
 					g.patrol = nil
 				end
@@ -494,23 +606,27 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- day/night + eggs
+-- กลางวัน/กลางคืน + ไข่
 -- ============================================================
 local DAY_LEN, NIGHT_LEN, DAWN_WARN = 180, 240, 20
 local phase = "day"
 local phaseT = DAY_LEN
 local liveEggs = {}
-local EGG_COLOR = { common = Color3.fromRGB(245, 245, 240), rare = Color3.fromRGB(120, 180, 255), epic = Color3.fromRGB(190, 120, 255), legendary = Color3.fromRGB(255, 190, 60) }
+EGG_COLOR = {
+	common = Color3.fromRGB(245, 245, 240), rare = Color3.fromRGB(120, 180, 255), epic = Color3.fromRGB(190, 120, 255),
+	legendary = Color3.fromRGB(255, 190, 60), mythic = Color3.fromRGB(255, 80, 60), secret = Color3.fromRGB(60, 30, 90),
+	divine = Color3.fromRGB(255, 250, 210), mystery = Color3.fromRGB(15, 5, 25), trash = Color3.fromRGB(120, 110, 90),
+}
 local function eggColor(r) return EGG_COLOR[r] or EGG_COLOR.common end
 
-local function makeEgg(isl, pos, petId, weight)
+function makeEgg(isl, pos, petId, weight)
 	local p = petById(petId)
 	local g = Instance.new("Folder"); g.Parent = root
 	cyl(2, 1, pos + Vector3.new(0, 0.5, 0), Color3.fromRGB(120, 100, 80), Enum.Material.Slate)
 	local e = ball(Vector3.new(3, 4, 3), pos + Vector3.new(0, 2.6, 0), eggColor(p.rarity), Enum.Material.SmoothPlastic)
 	e.Name = "EggLive"
 	e.CanTouch = false
-	if p.rarity == "legendary" or p.rarity == "epic" then
+	if RANK[p.rarity] >= 4 then
 		local li = Instance.new("PointLight"); li.Color = eggColor(p.rarity); li.Range = 30; li.Brightness = 3; li.Parent = e
 	end
 	sign3d(e, weight .. " kg", 90, 40)
@@ -525,11 +641,13 @@ local function spawnNightEggs()
 			if not picked[s] then
 				picked[s] = true
 				local pool = poolOf(isl)
-				local pet = pickWeighted(pool) -- ถ่วงน้ำหนักตาม SPAWN_W
+				local pet = pickWeighted(pool)
 				local bw = WEIGHT[pet.rarity]
-				local w = math.floor(bw * (0.8 + math.random() * 0.8) * 10) / 10 -- 0.8x-1.6x
+				local w
+				if bw < 1 then w = bw else w = math.max(1, math.floor(bw * (0.8 + math.random() * 0.8) * 10) / 10) end
 				makeEgg(isl, s, pet.id, w)
 				if pet.rarity == "legendary" then evNote:FireAllClients("ban", "legend") end
+				if pet.rarity == "mystery" then evNote:FireAllClients("ban", "mystery_egg") end
 			end
 		end
 	end
@@ -568,7 +686,7 @@ task.spawn(function()
 	end
 end)
 
--- ---------- pickup (client holds 3s then calls Pick) ----------
+-- ---------- เก็บไข่ ----------
 evPick.OnServerEvent:Connect(function(plr, eggPart)
 	local uid = plr.UserId
 	if carrying[uid] then return end
@@ -590,45 +708,42 @@ evPick.OnServerEvent:Connect(function(plr, eggPart)
 	evNote:FireClient(plr, "pop", "pickup", eg.weight)
 end)
 
-local function hatchAt(plr)
-	local uid = plr.UserId
-	local c = carrying[uid] if not c then return end
-	local d = DATA[uid] if not d then return end
-	c.model:Destroy(); carrying[uid] = nil
-	plr:SetAttribute("Carrying", 0); plr:SetAttribute("CarryWeight", 0)
-	applyWalk(plr)
-	table.insert(d.pets, c.pet .. "@" .. c.weight)
-	local p = petById(c.pet)
-	d.index[p.isl] = d.index[p.isl] or {}
-	local seen = false
-	for _, id in ipairs(d.index[p.isl]) do if id == c.pet then seen = true end end
-	if not seen then table.insert(d.index[p.isl], c.pet) end
-	syncAttrs(plr)
-	evNote:FireClient(plr, "pop", "hatch", c.pet, p.rarity)
-	if #d.index[p.isl] >= #poolOf(p.isl) then
-		evNote:FireClient(plr, "ban", "idx_done", p.isl)
+local function ownBase(d, id)
+	for _, en in ipairs(d.pets) do
+		local b = parseEntry(en)
+		if b == id then return true end
 	end
+	return false
 end
-
-task.spawn(function()
-	while true do
-		RunService.Heartbeat:Wait()
-		for _, plr in ipairs(Players:GetPlayers()) do
-			local d = DATA[plr.UserId]
-			local c = carrying[plr.UserId]
-			if d and c then
-				local char = plr.Character
-				local hrp = char and char:FindFirstChild("HumanoidRootPart")
-				if hrp then
-					local inc = root:FindFirstChild("Incubator" .. d.slot)
-					if inc and (inc.Position - hrp.Position).Magnitude < 7 then hatchAt(plr) end
-				end
-			end
+local function grantPet(plr, d, petId, weight)
+	local p = petById(petId)
+	if SINGLE[p.rarity] and ownBase(d, petId) then
+		local val = sellValue(petId .. "@" .. weight)
+		local c = money(plr)
+		if c then c.Value = c.Value + val end
+		evNote:FireClient(plr, "pop", "dup_convert", val)
+		return
+	end
+	table.insert(d.pets, petId .. "@" .. weight)
+	d.index[p.isl == "all" and 2 or p.isl] = d.index[p.isl == "all" and 2 or p.isl] or {}
+	for isl = 2, 5 do
+		if p.isl == isl or p.isl == "all" then
+			d.index[isl] = d.index[isl] or {}
+			local seen = false
+			for _, id in ipairs(d.index[isl]) do if id == petId then seen = true end end
+			if not seen then table.insert(d.index[isl], petId) end
+			if #d.index[isl] >= #poolOf(isl) then evNote:FireClient(plr, "ban", "idx_done", isl) end
 		end
 	end
-end)
+	if p.rarity == "mystery" then
+		evNote:FireClient(plr, "reveal", petId)
+	else
+		evNote:FireClient(plr, "pop", "hatch", petId, p.rarity)
+	end
+	syncAttrs(plr)
+end
 
--- ---------- actions ----------
+-- ---------- แอ็กชัน ----------
 evAct.OnServerEvent:Connect(function(plr, action, arg)
 	local uid = plr.UserId
 	local d = DATA[uid] if not d then return end
@@ -649,6 +764,27 @@ evAct.OnServerEvent:Connect(function(plr, action, arg)
 		plr:SetAttribute("OnBoat", 0)
 		local hrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
 		if hrp then hrp.CFrame = b.cf * CFrame.new(6, 3, 0) end
+	elseif action == "place" then
+		-- วางไข่ที่สวน → เริ่มนับเวลาฟัก
+		local cc = carrying[uid] if not cc then return end
+		local p = petById(cc.pet)
+		local mult = wMult(cc.pet, cc.weight)
+		local wait = math.min(MAX_WAIT, math.floor(WAIT_BASE[p.rarity] * mult))
+		cc.model:Destroy(); carrying[uid] = nil
+		plr:SetAttribute("Carrying", 0); plr:SetAttribute("CarryWeight", 0)
+		applyWalk(plr)
+		table.insert(d.incub, { p = cc.pet, w = cc.weight, ready = os.time() + wait })
+		syncAttrs(plr)
+		evNote:FireClient(plr, "pop", "placed", math.floor(wait / 60))
+	elseif action == "hatch" then
+		-- ฟักไข่ที่ครบเวลา
+		for i, inc in ipairs(d.incub) do
+			if os.time() >= inc.ready then
+				table.remove(d.incub, i)
+				grantPet(plr, d, inc.p, inc.w)
+				return
+			end
+		end
 	elseif action == "upboat" then
 		local nl = d.boatLvl + 1
 		local cost = BOAT_COST[nl]
@@ -663,6 +799,7 @@ evAct.OnServerEvent:Connect(function(plr, action, arg)
 		if cost and c and c.Value >= cost then
 			c.Value = c.Value - cost; d.gardenLvl = nl
 			plr:SetAttribute("GardenLvl", nl); plr:SetAttribute("Slots", slotsOf(d))
+			syncAttrs(plr)
 			evNote:FireClient(plr, "pop", "garden_up", slotsOf(d))
 		end
 	elseif action == "fuse" then
@@ -684,7 +821,7 @@ evAct.OnServerEvent:Connect(function(plr, action, arg)
 				end
 			end
 			d.pets = np
-			sumW = math.floor(sumW * 10) / 10
+			sumW = math.floor(sumW * 100) / 100
 			table.insert(d.pets, "BIG" .. id .. "@" .. sumW)
 			syncAttrs(plr)
 			evNote:FireClient(plr, "pop", "fuse_ok", id)
@@ -712,7 +849,6 @@ evAct.OnServerEvent:Connect(function(plr, action, arg)
 				c.Value = c.Value - t.cost
 				d.trailsOwned = d.trailsOwned or {}
 				table.insert(d.trailsOwned, i)
-				owned = true
 			else
 				return
 			end
@@ -743,7 +879,7 @@ evIntro.OnServerEvent:Connect(function(plr)
 	save(plr)
 end)
 
--- ---------- admin ----------
+-- ---------- แอดมิน ----------
 local OWNERS = {}
 local function isAdmin(plr)
 	if plr.UserId == 0 then return true end
@@ -763,17 +899,19 @@ local function wireAdminChat(plr)
 			if c then c.Value = math.clamp(c.Value + n, 0, 9000000000) fb("money_add", n) end
 		elseif cmd == "/allpets" then
 			local d = DATA[plr.UserId]
-			for _, p in ipairs(PETS) do table.insert(d.pets, p.id) end
+			for _, p in ipairs(PETS) do
+				if not SINGLE[p.rarity] or not ownBase(d, p.id) then table.insert(d.pets, p.id .. "@" .. WEIGHT[p.rarity]) end
+			end
 			syncAttrs(plr); fb("allpets")
 		elseif cmd == "/egg" then
 			local id, w = arg:match("^(%S+)%s*(%S*)")
 			local p = petById(id)
 			if p then
-				local weight = math.clamp(tonumber(w) or WEIGHT[p.rarity], 5, 500)
+				local weight = math.clamp(tonumber(w) or WEIGHT[p.rarity], 0.01, 5000)
 				local char = plr.Character
 				local hrp = char and char:FindFirstChild("HumanoidRootPart")
 				if hrp then
-					makeEgg(p.isl, hrp.Position + Vector3.new(3, 0, 3), id, weight)
+					makeEgg(p.isl == "all" and 1 or p.isl, hrp.Position + Vector3.new(3, 0, 3), id, weight)
 					evNote:FireAllClients("admin", "egg_summon", plr.Name, id, weight)
 				end
 			else
@@ -790,7 +928,7 @@ local function wireAdminChat(plr)
 			if arg ~= "" then evNote:FireAllClients("admin", "__raw", arg:sub(1, 120)) end
 		elseif cmd == "/reset" then
 			local d = DATA[plr.UserId]
-			d.pets = {}; d.money = 150; d.boatLvl = 1; d.gardenLvl = 1; d.index = {}; d.trail = 0
+			d.pets = {}; d.money = 150; d.boatLvl = 1; d.gardenLvl = 1; d.index = {}; d.trail = 0; d.incub = {}
 			if c then c.Value = 150 end
 			syncAttrs(plr); fb("reset_ok")
 		elseif cmd == "/help" then
@@ -805,7 +943,7 @@ Lighting.ClockTime = 10
 Lighting.Brightness = 1.5
 Lighting.FogEnd = 4000
 pcall(function() Lighting.Technology = Enum.Technology.Future end)
-print("GAMECORE5 READY")
+print("GAMECORE7 READY")
 ]=]
 local LANG = [=[
 -- EGG ISLE v5 · EggLang (ModuleScript → ReplicatedStorage)
@@ -814,22 +952,22 @@ local LS = game:GetService("LocalizationService")
 local M = {}
 
 M.PET_R = { cat = "common", dog = "common", rab = "common", pan = "uncommon", cap = "uncommon", ele = "rare", lio = "rare", dra = "epic", uni = "epic", gld = "legendary", phx = "legendary" }
-M.WEIGHT = { common = 10, uncommon = 20, rare = 40, epic = 80, legendary = 150 }
-M.PWR = { cat = 1, dog = 1, rab = 1, pan = 3, cap = 3, ele = 10, lio = 10, dra = 40, uni = 40, gld = 200, phx = 200 }
+M.WEIGHT = { common = 10, uncommon = 20, rare = 40, epic = 80, legendary = 150, mythic = 300, secret = 600, divine = 1200, mystery = 2500, trash = 0.01 }
+M.PWR = { cat = 1, dog = 1, rab = 1, pan = 3, cap = 3, ele = 10, lio = 10, dra = 40, uni = 40, gld = 200, phx = 200, bull = 1000, scor = 1000, bear = 1000, bat = 1000, sheep = 5000, sphinx = 5000, wraith = 5000, shd = 5000, seraph = 25000, void = 100000, sloth = 1000 }
 M.PET_N = {
-	en = { cat = "Orange Cat", dog = "Corgi", rab = "White Bunny", pan = "Panda", cap = "Capybara", ele = "Pink Elephant", lio = "Golden Lion", dra = "Ice Dragon", uni = "Rainbow Unicorn", gld = "Golden Dragon", phx = "Cosmic Phoenix" },
-	th = { cat = "แมวส้ม", dog = "คอร์กี้", rab = "กระต่ายขาว", pan = "แพนด้า", cap = "คาปิบาร่า", ele = "ช้างชมพู", lio = "สิงโตทอง", dra = "มังกรน้ำแข็ง", uni = "ยูนิคอร์นรุ้ง", gld = "ดราก้อนทอง", phx = "ฟีนิกซ์จักรวาล" },
+	en = { cat = "Orange Cat", dog = "Corgi", rab = "White Bunny", pan = "Panda", cap = "Capybara", ele = "Pink Elephant", lio = "Golden Lion", dra = "Ice Dragon", uni = "Rainbow Unicorn", gld = "Golden Dragon", phx = "Cosmic Phoenix", bull = "Golden Bull", scor = "Pharaoh Scorpion", bear = "Emperor Polar Bear", bat = "Blood Bat", sheep = "Cloud Sheep", sphinx = "Sphinx", wraith = "Ice Wraith", shd = "Shadow Dragon", seraph = "Light Seraph", void = "The Void Walker", sloth = "Trash Sloth" },
+	th = { cat = "แมวส้ม", dog = "คอร์กี้", rab = "กระต่ายขาว", pan = "แพนด้า", cap = "คาปิบาร่า", ele = "ช้างชมพู", lio = "สิงโตทอง", dra = "มังกรน้ำแข็ง", uni = "ยูนิคอร์นรุ้ง", gld = "ดราก้อนทอง", phx = "ฟีนิกซ์จักรวาล", bull = "วัวทอง", scor = "แมงป่องฟาโรห์", bear = "จักรพรรดิหมีขาว", bat = "ค้างคาวโลหิต", sheep = "แกะเมฆา", sphinx = "สฟิงซ์", wraith = "วิญญาณน้ำแข็ง", shd = "มังกรเงา", seraph = "เซราฟิมแสง", void = "ผู้ย่างเท้าแห่งความว่างเปล่า", sloth = "สลอธกาก" },
 }
 M.RAR = {
-	en = { common = "Common", uncommon = "Uncommon", rare = "Rare", epic = "Epic", legendary = "Legendary" },
-	th = { common = "ธรรมดา", uncommon = "ไม่ธรรมดา", rare = "หายาก", epic = "มหากาพย์", legendary = "ตำนาน" },
-	es = { common = "Común", uncommon = "Infrecuente", rare = "Raro", epic = "Épico", legendary = "Legendario" },
-	pt = { common = "Comum", uncommon = "Incomum", rare = "Raro", epic = "Épico", legendary = "Lendário" },
-	id = { common = "Biasa", uncommon = "Tak Umum", rare = "Langka", epic = "Epik", legendary = "Legendaris" },
-	vi = { common = "Thường", uncommon = "Hiếm Vừa", rare = "Hiếm", epic = "Sử Thi", legendary = "Huyền Thoại" },
-	zh = { common = "普通", uncommon = "进阶", rare = "稀有", epic = "史诗", legendary = "传说" },
-	ko = { common = "일반", uncommon = "고급", rare = "희귀", epic = "영웅", legendary = "전설" },
-	ja = { common = "ノーマル", uncommon = "アンコモン", rare = "レア", epic = "エピック", legendary = "伝説" },
+	en = { common = "Common", uncommon = "Uncommon", rare = "Rare", epic = "Epic", legendary = "Legendary", mythic = "Mythic", secret = "Secret", divine = "Divine", mystery = "???", trash = "Trash" },
+	th = { common = "ธรรมดา", uncommon = "ไม่ธรรมดา", rare = "หายาก", epic = "มหากาพย์", legendary = "ตำนาน", mythic = "เทพเจ้า", secret = "ลับสุดยอด", divine = "ศักดิ์สิทธิ์", mystery = "???", trash = "กาก" },
+	es = { common = "Común", uncommon = "Infrecuente", rare = "Raro", epic = "Épico", legendary = "Legendario", mythic = "Mítico", secret = "Secreto", divine = "Divino", mystery = "???", trash = "Basura" },
+	pt = { common = "Comum", uncommon = "Incomum", rare = "Raro", epic = "Épico", legendary = "Lendário", mythic = "Mítico", secret = "Secreto", divine = "Divino", mystery = "???", trash = "Lixo" },
+	id = { common = "Biasa", uncommon = "Tak Umum", rare = "Langka", epic = "Epik", legendary = "Legendaris", mythic = "Mitos", secret = "Rahasia", divine = "Ilahi", mystery = "???", trash = "Sampah" },
+	vi = { common = "Thường", uncommon = "Hiếm Vừa", rare = "Hiếm", epic = "Sử Thi", legendary = "Huyền Thoại", mythic = "Thần Thoại", secret = "Bí Mật", divine = "Thần Thánh", mystery = "???", trash = "Rác" },
+	zh = { common = "普通", uncommon = "进阶", rare = "稀有", epic = "史诗", legendary = "传说", mythic = "神话", secret = "隐藏", divine = "神圣", mystery = "???", trash = "垃圾" },
+	ko = { common = "일반", uncommon = "고급", rare = "희귀", epic = "영웅", legendary = "전설", mythic = "신화", secret = "비밀", divine = "신성", mystery = "???", trash = "쓰레기" },
+	ja = { common = "ノーマル", uncommon = "アンコモン", rare = "レア", epic = "エピック", legendary = "伝説", mythic = "神話", secret = "シークレット", divine = "神聖", mystery = "???", trash = "トラッシュ" },
 }
 
 M.L = {
@@ -863,9 +1001,12 @@ M.L = {
 		guard_name = "Guardian {1}", guard_hit = "The guardian snatched your egg back to its nest!",
 		tut_title = "HOW TO PLAY", tut1 = "1. At NIGHT eggs appear - board a boat at the dock and sail to an island",
 		tut2 = "2. Walk to an egg and HOLD 3s to grab it (heavier = slower but earns more)",
-		tut3 = "3. Carry it to YOUR garden Incubator to hatch",
+		tut3 = "3. Place the egg in your garden and wait - rarer & heavier = longer (max 2 days), then HATCH",
 		tut4 = "4. Try the menus: FUSE 3 same pets, TRAIL shop, free CHEST, LANG button",
 		tut_skip = "Skip", tut_end = "Finish",
+		placed = "Egg placed! Hatching in ~{1} min", place_egg = "Place egg (start hatch timer)", hatch_now = "HATCH NOW!",
+		incub = "Hatching: {1} ({2})", ready = "READY", dup_convert = "Already owned - converted +${1}",
+		reveal = "??? REVEALED: {1}!", mystery_egg = "A ??? egg appeared somewhere...", hint = "Hint: {1}", unknown = "???",
 	},
 	th = {
 		day = "กลางวัน", night = "กลางคืน", carry = "ถือไข่ {1} กก. - เดิน {2}", holdbtn = "กดค้าง\nเก็บไข่",
@@ -897,9 +1038,12 @@ M.L = {
 		guard_name = "ผู้พิทักษ์ {1}", guard_hit = "ผู้พิทักษ์แย่งไข่คืนรังไปแล้ว!",
 		tut_title = "วิธีเล่น", tut1 = "1. กลางคืนไข่จะโผล่ - ขึ้นเรือที่ท่านแล่นไปเกาะ",
 		tut2 = "2. เดินใกล้ไข่แล้วกดค้าง 3 วิเพื่อเก็บ (หนัก=ช้าแต่เงินเยอะ)",
-		tut3 = "3. ถือไข่กลับเครื่องฟักที่สวนของคุณเพื่อฟัก",
+		tut3 = "3. วางไข่ที่สวนแล้วรอเวลาฟัก (หายาก/หนัก = รอนาน สูงสุด 2 วัน) แล้วค่อยกดฟัก",
 		tut4 = "4. ลองเมนู: ฟิวส์สัตว์เดียวกัน 3 ตัว, ร้านเทรล, หีบฟรี, ปุ่มภาษา",
 		tut_skip = "ข้าม", tut_end = "จบการสอน",
+		placed = "วางไข่แล้ว! ฟักใน ~{1} นาที", place_egg = "วางไข่ (เริ่มนับเวลาฟัก)", hatch_now = "ฟักเลย!",
+		incub = "กำลังฟัก: {1} ({2})", ready = "พร้อมฟัก", dup_convert = "มีอยู่แล้ว - แปลงเป็น +${1}",
+		reveal = "??? ถูกเปิดเผย: {1}!", mystery_egg = "ไข่ ??? โผล่ที่ไหนสักแห่ง...", hint = "ใบ้: {1}", unknown = "???",
 	},
 	es = {
 		day = "DÍA", night = "NOCHE", carry = "Llevas huevo de {1} kg - paso {2}", holdbtn = "MANTEN\nPARA TOMAR",
@@ -931,9 +1075,12 @@ M.L = {
 		guard_name = "Guardián {1}", guard_hit = "El guardián recuperó el huevo!",
 		tut_title = "CÓMO JUGAR", tut1 = "1. De NOCHE aparecen huevos - sube al barco y zarpa",
 		tut2 = "2. Acércate y MANTEN 3s (más pesado = más lento pero gana más)",
-		tut3 = "3. Llévalo a tu Incubadora para eclosionarlo",
+		tut3 = "3. Coloca el huevo en tu jardin y espera para eclosionar",
 		tut4 = "4. Prueba: FUSIÓN, estelas, cofre gratis, idioma",
 		tut_skip = "Saltar", tut_end = "Listo",
+		placed = "Huevo colocado! ~{1} min", place_egg = "Colocar huevo", hatch_now = "ECLOSIONAR!",
+		incub = "Eclosionando: {1} ({2})", ready = "LISTO", dup_convert = "Ya lo tienes +${1}",
+		reveal = "??? REVELADO: {1}!", mystery_egg = "Un huevo ??? aparecio...", hint = "Pista: {1}", unknown = "???",
 	},
 	pt = {
 		day = "DIA", night = "NOITE", carry = "Carregando ovo de {1} kg - passo {2}", holdbtn = "SEGURE\nPARA PEGAR",
@@ -965,9 +1112,12 @@ M.L = {
 		guard_name = "Guardião {1}", guard_hit = "O guardião levou o ovo de volta!",
 		tut_title = "COMO JOGAR", tut1 = "1. À NOITE ovos aparecem - entre no barco e zarpe",
 		tut2 = "2. Chegue perto e SEGURE 3s (mais pesado = mais lento, rende mais)",
-		tut3 = "3. Leve à sua Incubadora para chocar",
+		tut3 = "3. Coloque o ovo no jardim e espere para chocar",
 		tut4 = "4. Explore: FUSÃO, rastros, baú grátis, idioma",
 		tut_skip = "Pular", tut_end = "Concluir",
+		placed = "Ovo colocado! ~{1} min", place_egg = "Colocar ovo", hatch_now = "CHOCHAR!",
+		incub = "Chocando: {1} ({2})", ready = "PRONTO", dup_convert = "Ja tem +${1}",
+		reveal = "??? REVELADO: {1}!", mystery_egg = "Um ovo ??? apareceu...", hint = "Dica: {1}", unknown = "???",
 	},
 	id = {
 		day = "SIANG", night = "MALAM", carry = "Membawa telur {1} kg - jalan {2}", holdbtn = "TAHAN\nUNTUK AMBIL",
@@ -999,9 +1149,12 @@ M.L = {
 		guard_name = "Penjaga {1}", guard_hit = "Penjaga merebut kembali telurnya!",
 		tut_title = "CARA MAIN", tut1 = "1. MALAM hari telur muncul - naik perahu dan berlayar",
 		tut2 = "2. Dekati telur dan TAHAN 3s (berat = lambat tapi hasil besar)",
-		tut3 = "3. Bawa ke Inkubator kebunmu untuk menetaskan",
+		tut3 = "3. Letakkan telur di kebunmu dan tunggu untuk menetas",
 		tut4 = "4. Coba menu: FUSI, jejak, peti gratis, bahasa",
 		tut_skip = "Lewati", tut_end = "Selesai",
+		placed = "Telur diletakkan! ~{1} mnt", place_egg = "Letakkan telur", hatch_now = "TETASKAN!",
+		incub = "Menetas: {1} ({2})", ready = "SIAP", dup_convert = "Sudah punya +${1}",
+		reveal = "??? TERUNGKAP: {1}!", mystery_egg = "Telur ??? muncul...", hint = "Petunjuk: {1}", unknown = "???",
 	},
 	vi = {
 		day = "NGÀY", night = "ĐÊM", carry = "Đang ôm trứng {1} kg - đi {2}", holdbtn = "GIỮ\nĐỂ NHẶT",
@@ -1033,9 +1186,12 @@ M.L = {
 		guard_name = "Hộ Vệ {1}", guard_hit = "Hộ Vệ đã đoạt lại trứng!",
 		tut_title = "CÁCH CHƠI", tut1 = "1. Ban ĐÊM trứng xuất hiện - lên thuyền ra khơi",
 		tut2 = "2. Lại gần và GIỮ 3s (nặng = chậm nhưng thu nhiều hơn)",
-		tut3 = "3. Mang về máy ấp trong vườn để nở",
+		tut3 = "3. Đặt trứng vào vườn và chờ nở",
 		tut4 = "4. Thử menu: HỢP NHẤT, vết, rương miễn phí, ngôn ngữ",
 		tut_skip = "Bỏ qua", tut_end = "Xong",
+		placed = "Đã đặt trứng! ~{1} phút", place_egg = "Đặt trứng", hatch_now = "NỞ NGAY!",
+		incub = "Đang nở: {1} ({2})", ready = "SẴN SÀNG", dup_convert = "Đã sở hữu +${1}",
+		reveal = "??? LỘ DIỆN: {1}!", mystery_egg = "Một quả ??? xuất hiện...", hint = "Gợi ý: {1}", unknown = "???",
 	},
 	zh = {
 		day = "白天", night = "夜晚", carry = "抱着 {1} kg 蛋 - 移速 {2}", holdbtn = "长按\n拾取",
@@ -1067,9 +1223,12 @@ M.L = {
 		guard_name = "守护者 {1}", guard_hit = "守护者把蛋夺回巢穴了!",
 		tut_title = "玩法教学", tut1 = "1. 夜晚蛋会出现 - 上船出航",
 		tut2 = "2. 靠近蛋长按 3 秒 (越重越慢但收益更高)",
-		tut3 = "3. 抱回你花园的孵化器孵化",
+		tut3 = "3. 把蛋放在花园等待孵化",
 		tut4 = "4. 试试菜单: 融合, 拖尾, 免费宝箱, 语言",
 		tut_skip = "跳过", tut_end = "完成",
+		placed = "蛋已放置! 约{1}分钟", place_egg = "放置蛋", hatch_now = "立即孵化!",
+		incub = "孵化中: {1} ({2})", ready = "完成", dup_convert = "已拥有 +${1}",
+		reveal = "??? 揭晓: {1}!", mystery_egg = "??? 蛋出现了...", hint = "提示: {1}", unknown = "???",
 	},
 	ko = {
 		day = "낮", night = "밤", carry = "알 {1} kg 드는 중 - 속도 {2}", holdbtn = "길게\n눌러 줍기",
@@ -1101,9 +1260,12 @@ M.L = {
 		guard_name = "수호자 {1}", guard_hit = "수호자가 알을 되가져갔습니다!",
 		tut_title = "플레이 방법", tut1 = "1. 밤이 되면 알 등장 - 보트 타고 출항",
 		tut2 = "2. 알에 다가가 3초 길게 눌러 줍기 (무거울수록 느리지만 수익 업)",
-		tut3 = "3. 정원의 부화기로 가져가 부화",
+		tut3 = "3. 정원에 알을 놓고 기다린 후 부화",
 		tut4 = "4. 메뉴 탐색: 퓨전, 트레일, 무료 상자, 언어",
 		tut_skip = "건너뛰기", tut_end = "완료",
+		placed = "알 배치! 약{1}분", place_egg = "알 놓기", hatch_now = "지금 부화!",
+		incub = "부화 중: {1} ({2})", ready = "완료", dup_convert = "이미 보유 +${1}",
+		reveal = "??? 공개: {1}!", mystery_egg = "??? 알이 나타났습니다...", hint = "힌트: {1}", unknown = "???",
 	},
 	ja = {
 		day = "昼", night = "夜", carry = "卵 {1} kg 所持 - 歩速 {2}", holdbtn = "長押しで\n拾う",
@@ -1135,12 +1297,32 @@ M.L = {
 		guard_name = "ガーディアン {1}", guard_hit = "ガーディアンに卵を持ち去られた!",
 		tut_title = "あそびかた", tut1 = "1. 夜になると卵が出現 - ボートで出航",
 		tut2 = "2. 卵に近づき3秒長押しで拾う (重いほど遅いが収入増)",
-		tut3 = "3. 庭の孵化器へ運んで孵化",
+		tut3 = "3. 庭に卵を置いて孵化完了を待つ",
 		tut4 = "4. メニューを試そう: 融合, トレイル, 無料宝箱, 言語",
 		tut_skip = "スキップ", tut_end = "完了",
+		placed = "卵を設置! 約{1}分", place_egg = "卵を置く", hatch_now = "今すぐ孵化!",
+		incub = "孵化中: {1} ({2})", ready = "完了", dup_convert = "所持済み +${1}",
+		reveal = "??? 判明: {1}!", mystery_egg = "???の卵が現れた...", hint = "ヒント: {1}", unknown = "???",
 	},
 }
 
+
+M.PET_META = {
+	cat = { r = "common", isl = 2 }, dog = { r = "common", isl = 2 }, rab = { r = "common", isl = 2 }, pan = { r = "uncommon", isl = 2 },
+	cap = { r = "uncommon", isl = 3 }, ele = { r = "rare", isl = 3 }, lio = { r = "rare", isl = 3 },
+	dra = { r = "epic", isl = 4 }, uni = { r = "epic", isl = 4 }, gld = { r = "legendary", isl = 5 }, phx = { r = "legendary", isl = 5 },
+	bull = { r = "mythic", isl = 2, hint = { en = "A mighty horned beast of the grass fields", th = "สัตว์เขาทรงพลังแห่งทุ่งหญ้า" } },
+	scor = { r = "mythic", isl = 3, hint = { en = "A stinging king beneath the desert sands", th = "ราชาเหล็กในใต้ทรายทะเลทราย" } },
+	bear = { r = "mythic", isl = 4, hint = { en = "The frozen emperor who sleeps once a year", th = "จักรพรรดิน้ำแข็งที่หลับปีละครั้ง" } },
+	bat = { r = "mythic", isl = 5, hint = { en = "Wings of blood in the darkest sky", th = "ปีกสีเลือดในฟ้าที่มืดที่สุด" } },
+	sheep = { r = "secret", isl = 2, hint = { en = "A fluffy cloud that walks on grass", th = "ก้อนเมฆปุกปุยที่เดินบนทุ่ง" } },
+	sphinx = { r = "secret", isl = 3, hint = { en = "It asks riddles to egg thieves", th = "มันชอบถามคำถามกับขโมยไข่" } },
+	wraith = { r = "secret", isl = 4, hint = { en = "A cold spirit that is not quite there", th = "วิญญาณหนาวเย็นที่ไม่มีตัวตน" } },
+	shd = { r = "secret", isl = 5, hint = { en = "A dragon forged from the island's shadow", th = "มังกรที่หล่อหลอมจากเงาของเกาะ" } },
+	seraph = { r = "divine", isl = "all", hint = { en = "Six wings of holy light", th = "ปีกแสงศักดิ์สิทธิ์หกข้าง" } },
+	void = { r = "mystery", isl = "all" },
+	sloth = { r = "trash", isl = "all", hint = { en = "Slow... but surprisingly rich", th = "ช้า... แต่รวยผิดปกติ" } },
+}
 M.cur = "en"
 function M.detect()
 	local ok, loc = pcall(function() return (LS.RobloxLocaleId or "en-us"):lower() end)
@@ -1173,7 +1355,7 @@ return M
 ]=]
 local GUI = [=[
 -- ============================================================
--- EGG ISLE v6 · Gui6 (LocalScript → StarterPlayerScripts)
+-- EGG ISLE v7 · Gui7 (LocalScript → StarterPlayerScripts)
 -- i18n (EN default, auto-detect) · bag · 3 boards · hold-3s pickup
 -- FredokaOne + black stroke everywhere · no emojis
 -- ============================================================
@@ -1236,6 +1418,7 @@ local function compose(key, a, b, c)
 	end
 	if key == "fuse_ok" then return LM.tr(key, LM.petName(a)) end
 	if key == "trail_on" then return LM.tr(key, LM.tr("trail" .. tostring(a)), b) end
+	if key == "reveal" then return LM.tr(key, LM.petName(a)) end
 	return LM.tr(key, a, b, c)
 end
 
@@ -1312,6 +1495,10 @@ evNote.OnClientEvent:Connect(function(kind, key, a, b, c)
 		adminMsg.Text = text
 		adminBox.Visible = true
 		task.delay(5, function() adminBox.Visible = false end)
+	elseif kind == "reveal" then
+		revTxt.Text = text
+		revBox.Visible = true
+		task.delay(6, function() revBox.Visible = false end)
 	else
 		popTxt.Text = text; pop.Visible = true
 		task.delay(2.5, function() pop.Visible = false end)
@@ -1370,15 +1557,27 @@ local bagInfo = txt(bagBody, UDim2.new(1, 0, 0, 36)); bagInfo.TextWrapped = true
 local bagScroll = Instance.new("ScrollingFrame"); bagScroll.Size = UDim2.new(1, 0, 1, -44)
 bagScroll.Position = UDim2.fromOffset(0, 40); bagScroll.BackgroundTransparency = 1; bagScroll.ScrollBarThickness = 4; bagScroll.Parent = bagBody
 
--- index
-local idxPanel, idxBody, idxTitle = makePanel("Index", 300, 290, "t_index")
-local il = Instance.new("UIListLayout"); il.Padding = UDim.new(0, 8); il.Parent = idxBody
-local idxRows = {}
+-- index (เงา + คำใบ้ · ??? ไม่มีใบ้)
+local idxPanel, idxBody, idxTitle = makePanel("Index", 340, 400, "t_index")
+local idxScroll = Instance.new("ScrollingFrame"); idxScroll.Size = UDim2.new(1, 0, 1, 0)
+idxScroll.BackgroundTransparency = 1; idxScroll.ScrollBarThickness = 4; idxScroll.Parent = idxBody
+local idxIL = Instance.new("UIListLayout"); idxIL.Padding = UDim.new(0, 4); idxIL.Parent = idxScroll
+local idxList = {}
 for isl = 2, 5 do
-	local r = Instance.new("TextLabel"); r.Size = UDim2.new(1, 0, 0, 44)
-	r.BackgroundColor3 = Color3.fromRGB(60, 64, 84); r.Font = FONT; r.TextScaled = true
-	r.TextColor3 = Color3.fromRGB(255, 255, 255); corner(r, 10); stroke(r, Color3.fromRGB(0, 0, 0), 2); r.Parent = idxBody
-	idxRows[isl] = r
+	local head = txt(idxScroll, UDim2.new(1, 0, 0, 30), UDim2.new(), Color3.fromRGB(255, 220, 120))
+	local rows = {}
+	for id, meta in pairs(LM.PET_META) do
+		if meta.isl == isl or meta.isl == "all" then
+			local row = Instance.new("Frame"); row.Size = UDim2.new(1, -4, 0, 38)
+			row.BackgroundColor3 = Color3.fromRGB(34, 40, 60); corner(row, 8); row.Parent = idxScroll
+			local chip = Instance.new("Frame"); chip.Size = UDim2.fromOffset(26, 26); chip.Position = UDim2.fromOffset(6, 6)
+			corner(chip, 6); chip.BackgroundColor3 = Color3.fromRGB(15, 15, 18); chip.Parent = row
+			local lab = txt(row, UDim2.new(1, -40, 1, 0), UDim2.fromOffset(38, 0), Color3.fromRGB(255, 255, 255))
+			lab.TextWrapped = true
+			rows[id] = { chip = chip, lab = lab }
+		end
+	end
+	idxList[isl] = { head = head, rows = rows }
 end
 
 -- fuse
@@ -1455,6 +1654,29 @@ local holdFill = Instance.new("Frame"); holdFill.Size = UDim2.new(0, 0, 1, 0)
 holdFill.BackgroundColor3 = Color3.fromRGB(120, 220, 90); holdFill.BackgroundTransparency = 0.5
 holdFill.Parent = holdBtn
 local hc2 = Instance.new("UICorner"); hc2.CornerRadius = UDim.new(1, 0); hc2.Parent = holdFill
+
+-- ---------- วางไข่ / ฟักไข่ ที่สวน ----------
+local anyReady = false
+local placeBtn = Instance.new("TextButton"); placeBtn.Size = UDim2.fromOffset(170, 60)
+placeBtn.Position = UDim2.new(0.5, -190, 1, -100); placeBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+placeBtn.BackgroundColor3 = Color3.fromRGB(250, 150, 50); placeBtn.Font = FONT; placeBtn.TextScaled = true
+placeBtn.TextColor3 = Color3.fromRGB(255, 255, 255); placeBtn.Visible = false
+corner(placeBtn, 12); stroke(placeBtn, Color3.fromRGB(0, 0, 0), 3); placeBtn.Parent = gui
+placeBtn.Activated:Connect(function() evAct:FireServer("place") end)
+local hatchBtn = Instance.new("TextButton"); hatchBtn.Size = UDim2.fromOffset(170, 60)
+hatchBtn.Position = UDim2.new(0.5, 190, 1, -100); hatchBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+hatchBtn.BackgroundColor3 = Color3.fromRGB(88, 200, 60); hatchBtn.Font = FONT; hatchBtn.TextScaled = true
+hatchBtn.TextColor3 = Color3.fromRGB(255, 255, 255); hatchBtn.Visible = false
+corner(hatchBtn, 12); stroke(hatchBtn, Color3.fromRGB(0, 0, 0), 3); hatchBtn.Parent = gui
+hatchBtn.Activated:Connect(function() evAct:FireServer("hatch") end)
+
+-- ---------- ??? reveal overlay ----------
+local revBox = Instance.new("Frame"); revBox.Size = UDim2.new(0.9, 0, 0, 110)
+revBox.Position = UDim2.new(0.5, 0, 0.4, 0); revBox.AnchorPoint = Vector2.new(0.5, 0.5)
+revBox.BackgroundColor3 = Color3.fromRGB(10, 5, 20); revBox.BackgroundTransparency = 0.1
+revBox.Visible = false; corner(revBox, 16); stroke(revBox, Color3.fromRGB(160, 60, 255), 4); revBox.Parent = gui
+local revTxt = txt(revBox, UDim2.new(1, -16, 1, -10), UDim2.fromOffset(8, 5), Color3.fromRGB(255, 220, 120), Enum.TextXAlignment.Center)
+revTxt.TextWrapped = true
 
 local nearEgg = nil
 local holdTime = 0
@@ -1590,17 +1812,19 @@ task.spawn(function()
 		local w3 = WS:FindFirstChild("World3")
 		if w3 then
 			for _, d in ipairs(w3:GetDescendants()) do
-				if d.Name == "GHead" and not done[d] then
+				if d.Name == "GBody" and not done[d] then
 					done[d] = true
 					local pet = d:GetAttribute("Pet")
-					local bb = Instance.new("BillboardGui"); bb.Size = UDim2.new(0, 240, 0, 54); bb.AlwaysOnTop = true; bb.Parent = d
-					local t = txt(bb, UDim2.new(1, 0, 1, 0), UDim2.new(), Color3.fromRGB(255, 90, 90), Enum.TextXAlignment.Center)
-					task.spawn(function()
-						while d.Parent do
-							task.wait(1)
-							t.Text = LM.tr("guard_name", LM.petName(pet))
-						end
-					end)
+					local bb = d:FindFirstChildOfClass("BillboardGui")
+					local t = bb and bb:FindFirstChildOfClass("TextLabel")
+					if t then
+						task.spawn(function()
+							while d.Parent do
+								task.wait(1)
+								t.Text = LM.tr("guard_name", LM.petName(pet))
+							end
+						end)
+					end
 				end
 			end
 		end
@@ -1635,9 +1859,17 @@ local function petEntries()
 	table.sort(list, function(a, b) return a.pw > b.pw end)
 	return list
 end
-local SELLV = { [1] = 50, [3] = 150, [10] = 500, [40] = 2000, [200] = 10000 }
+local SELL_BY_RAR = { common = 50, uncommon = 150, rare = 500, epic = 2000, legendary = 10000, mythic = 50000, secret = 250000, divine = 1000000, mystery = 10000000, trash = 1 }
+local function fmtTime(sec)
+	sec = math.max(0, math.floor(sec))
+	local h = math.floor(sec / 3600); local m = math.floor((sec % 3600) / 60); local s2 = sec % 60
+	if h > 0 then return h .. "h " .. m .. "m" end
+	if m > 0 then return m .. "m " .. s2 .. "s" end
+	return s2 .. "s"
+end
+local GPOS_C = { Vector3.new(-30, 0, -20), Vector3.new(0, 0, -20), Vector3.new(30, 0, -20), Vector3.new(-30, 0, -48), Vector3.new(0, 0, -48), Vector3.new(30, 0, -48) }
 local function sellRow(parent, entry)
-	local val = math.floor((SELLV[LM.PWR[entry.base] or 1] or 50) * wMult(entry.base, entry.w) * (entry.big and 3 or 1))
+	local val = math.floor((SELL_BY_RAR[LM.PET_R[entry.base]] or 50) * wMult(entry.base, entry.w) * (entry.big and 3 or 1))
 	local row = Instance.new("Frame"); row.Size = UDim2.new(1, -4, 0, 34)
 	row.BackgroundColor3 = Color3.fromRGB(34, 40, 60); corner(row, 8); row.Parent = parent
 	local lab = txt(row, UDim2.new(0.62, 0, 1, 0), UDim2.fromOffset(6, 0), Color3.fromRGB(255, 255, 255))
@@ -1680,6 +1912,18 @@ local function refresh()
 	end
 	holdBtn.Text = LM.tr("holdbtn")
 	pad.Visible = (plr:GetAttribute("OnBoat") or 0) > 0
+	-- ปุ่มวางไข่/ฟักไข่ เมื่ออยู่ใกล้สวนตัวเอง
+	local char2 = plr.Character
+	local hrp2 = char2 and char2:FindFirstChild("HumanoidRootPart")
+	local nearG = false
+	if hrp2 then
+		local gp = GPOS_C[plr:GetAttribute("Slot") or 1] + Vector3.new(0, 7, 0)
+		nearG = (hrp2.Position - gp).Magnitude < 12
+	end
+	placeBtn.Text = LM.tr("place_egg")
+	hatchBtn.Text = LM.tr("hatch_now")
+	placeBtn.Visible = nearG and ((plr:GetAttribute("Carrying") or 0) > 0)
+	hatchBtn.Visible = nearG and anyReady
 	-- boat panel
 	local bc = BOAT_COST[blvl + 1]
 	upBoatBtn.Text = bc and (LM.tr("upboat") .. " $" .. short(bc)) or LM.tr("full_boat")
@@ -1708,6 +1952,24 @@ local function refresh()
 			sellRow(petScroll, { en = e.en, base = e.base, big = e.big, cnt = e.activeCnt, w = e.w })
 		end
 	end
+	-- ไข่ที่กำลังฟัก (นับถอยหลังจริง)
+	anyReady = false
+	local okI, incs = pcall(function() return Http:JSONDecode(plr:GetAttribute("IncubJSON") or "[]") end)
+	if okI and type(incs) == "table" then
+		for _, inc in ipairs(incs) do
+			local left = (inc.ready or 0) - os.time()
+			local row = Instance.new("Frame"); row.Size = UDim2.new(1, -4, 0, 30)
+			row.BackgroundColor3 = left <= 0 and Color3.fromRGB(60, 140, 60) or Color3.fromRGB(30, 60, 110)
+			corner(row, 8); row.Parent = petScroll
+			local lab = txt(row, UDim2.new(1, -8, 1, 0), UDim2.fromOffset(6, 0), Color3.fromRGB(255, 255, 255))
+			if left <= 0 then
+				anyReady = true
+				lab.Text = LM.petName(inc.p) .. " - " .. LM.tr("ready")
+			else
+				lab.Text = LM.tr("incub", LM.petName(inc.p), fmtTime(left))
+			end
+		end
+	end
 	bagInfo.Text = LM.tr("bag_info", bagN)
 	bagScroll:ClearAllChildren()
 	local bl2 = Instance.new("UIListLayout"); bl2.Padding = UDim.new(0, 5); bl2.Parent = bagScroll
@@ -1717,15 +1979,33 @@ local function refresh()
 			sellRow(bagScroll, { en = e.en, base = e.base, big = e.big, cnt = left, w = e.w })
 		end
 	end
-	-- index
+	-- index: ได้แล้ว=ชื่อ · ยังไม่ได้=เงา+คำใบ้ · ??? = ???
 	local ok2, idx = pcall(function() return Http:JSONDecode(plr:GetAttribute("IndexJSON") or "{}") end)
 	if ok2 and type(idx) == "table" then
 		for isl = 2, 5 do
+			local info = idxList[isl]
+			local arr = idx[tostring(isl)] or idx[isl] or {}
+			local disc = {}
+			if type(arr) == "table" then for _, id in ipairs(arr) do disc[id] = true end end
+			local poolN = 0
+			for id, r in pairs(info.rows) do
+				poolN = poolN + 1
+				local meta = LM.PET_META[id]
+				if disc[id] then
+					r.chip.BackgroundColor3 = Color3.fromRGB(120, 220, 90)
+					r.lab.Text = LM.petName(id) .. " [" .. LM.rarName(meta.r) .. "]"
+				elseif meta.r == "mystery" then
+					r.chip.BackgroundColor3 = Color3.fromRGB(10, 5, 20)
+					r.lab.Text = LM.tr("unknown")
+				else
+					r.chip.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+					local h = meta.hint and (meta.hint[LM.cur] or meta.hint.en) or ""
+					r.lab.Text = LM.tr("unknown") .. " - " .. LM.tr("hint", h)
+				end
+			end
 			local got = 0
-			local arr = idx[tostring(isl)] or idx[isl]
 			if type(arr) == "table" then got = #arr end
-			local done = got >= POOL_SIZE[isl]
-			idxRows[isl].Text = "Island " .. isl .. " " .. ISL_NAME[isl] .. "  " .. got .. "/" .. POOL_SIZE[isl] .. (done and "  " .. LM.tr("stick") or "")
+			info.head.Text = "Island " .. isl .. " " .. ISL_NAME[isl] .. " " .. got .. "/" .. poolN .. (got >= poolN and " " .. LM.tr("stick") or "")
 		end
 	end
 	-- fuse list
@@ -1926,7 +2206,7 @@ task.spawn(function()
 end)
 ]=]
 local toolbar = plugin:CreateToolbar("EggIsle")
-local btn = toolbar:CreateButton("Load EggIsle", "Put latest v6 code into the game", "")
+local btn = toolbar:CreateButton("Load EggIsle", "Put latest v7 code into the game", "")
 btn.Click:Connect(function()
 	local rs = game:GetService("ReplicatedStorage")
 	local m = rs:FindFirstChild("EggLang")
@@ -1945,5 +2225,5 @@ btn.Click:Connect(function()
 	it.Source = INTRO
 	local mb = ss:FindFirstChild("MapBuilder") if mb then mb:Destroy() end
 	local ag = sp:FindFirstChild("AdminGui") if ag then ag:Destroy() end
-	print("EGG ISLE v6 LOADED OK")
+	print("EGG ISLE v7 LOADED OK")
 end)
