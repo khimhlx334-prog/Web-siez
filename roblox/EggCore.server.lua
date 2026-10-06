@@ -216,3 +216,47 @@ evAdmin.OnServerEvent:Connect(function(plr, action, arg)
 		if msg ~= "" then evAnn:FireAllClients(msg) end
 	end
 end)
+
+-- ---------- 💬 คำสั่งแอดมินแบบแชท (พิมพ์ในแชท เกมมือถือก็ใช้ได้) ----------
+local function wireAdminChat(plr)
+	plr.Chatted:Connect(function(msg)
+		if not isAdmin(plr) then return end
+		local cmd, arg = msg:match("^(/%S+)%s*(.*)$")
+		if not cmd then return end
+		cmd = cmd:lower()
+		local ls = plr:FindFirstChild("leaderstats")
+		local function fb(t) evAnn:FireClient(plr, "🛠️ " .. t) end
+		if cmd == "/coins" then
+			local n = math.floor(tonumber(arg) or 1000000)
+			if ls then
+				ls.Coins.Value = math.clamp(ls.Coins.Value + n, 0, 9000000000)
+				fb("เติม " .. n .. " เหรียญแล้ว")
+			end
+		elseif cmd == "/leg" then
+			local pool = {}
+			for _, p in ipairs(PETS) do if p.rarity == "มหากาพย์" or p.rarity == "ตำนาน" then table.insert(pool, p) end end
+			givePet(plr, pool[math.random(1, #pool)].id)
+			fb("สุ่มตัวเทพให้แล้ว")
+		elseif cmd == "/allpets" then
+			for _, p in ipairs(PETS) do givePet(plr, p.id) end
+			fb("แจกครบ 11 ชนิดแล้ว")
+		elseif cmd == "/pet" then
+			if petById(arg) then givePet(plr, arg) fb("ให้ " .. arg .. " แล้ว") else fb("ไม่รู้จัก id: " .. arg) end
+		elseif cmd == "/reset" then
+			local d = DATA[plr.UserId]
+			if d then d.pets = {} end
+			if ls then ls.Coins.Value = 150 end
+			syncUI(plr)
+			fb("รีเซ็ตเซฟแล้ว")
+		elseif cmd == "/kick" then
+			local t = Players:FindFirstChild(arg)
+			if t and t ~= plr then t:Kick("🛠️ ถูกเตะโดยแอดมิน") fb("เตะ " .. arg .. " แล้ว") end
+		elseif cmd == "/say" or cmd == "/announce" then
+			if arg ~= "" then evAnn:FireAllClients(arg:sub(1, 120)) fb("ประกาศแล้ว") end
+		elseif cmd == "/help" then
+			fb("/coins จำนวน · /leg · /allpets · /pet id · /kick ชื่อ · /say ข้อความ · /reset")
+		end
+	end)
+end
+Players.PlayerAdded:Connect(wireAdminChat)
+for _, p in ipairs(Players:GetPlayers()) do wireAdminChat(p) end
